@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Ticker</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div id="ticker-container">
+        <div class="ticker-item">
+            <div class="channel-name" id="channel-name"></div>
+            <div class="message-text" id="message-text"></div>
+            <div class="message-media" id="message-media"></div> <!-- Added for media display -->
+            <div class="message-time" id="message-time"></div>
+        </div>            
+    </div>
+    <button id="refreshFeed">רענן פיד</button>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="/static/ticker.js"></script>
+</body>
+</html>

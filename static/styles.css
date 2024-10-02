@@ -1,0 +1,118 @@
+/* Dark Mode Styles */
+body {
+    background-color: #121212;
+    color: #FFFFFF;
+    text-align: center;
+    font-family: Arial, sans-serif;
+    overflow: hidden; /* Prevent scrolling */
+    margin: 0;
+}
+
+#ticker-container {
+    width: 100%;
+    height: calc(100vh - 80px); /* Full viewport height minus button height */
+    padding: 0;
+    display: flex;
+    flex-direction: column; /* Stack the channel name, message, and time vertically */
+    justify-content: center; /* Center the content vertically */
+    align-items: center;
+    overflow-y: auto; /* Enable vertical scrolling if content overflows */
+}
+
+#channel-name {
+    font-weight: bold;
+    font-size: 40px;
+    color: #888888;  /* Grey color */
+    margin-bottom: 10px; /* Add space below the channel name */
+    max-width: 90%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis; /* Truncate the channel name if it's too long */
+    direction: rtl;
+}
+
+#message-text {
+    font-size: 50px;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 90%;
+    margin: 0 auto;
+    display: inline-block;
+    max-height: calc(50vh); /* Limit message height to half of the viewport */
+    overflow-y: auto; /* Enable scrolling for long messages */
+    direction: rtl;
+}
+
+.message-image {
+    max-width: 100%; /* Make sure the image doesn't overflow */
+    max-height: calc(40vh); /* Limit image height to 40% of the viewport */
+    object-fit: contain; /* Maintain aspect ratio */
+    display: block;
+    margin: 10px auto; /* Add some margin around the image */
+}
+
+#message-time {
+    font-size: 25px;
+    color: #bbbbbb;
+    margin-top: 10px;
+    text-align: center;
+    direction: rtl;
+}
+
+#refreshFeed {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+    margin: 20px auto;
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    transition: background-color 0.2s;
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+#refreshFeed:hover {
+    background-color: #0056b3;
+}
+
+/* Media Queries for smaller devices */
+@media (max-width: 768px) {
+    #message-text {
+        font-size: 1.5em;
+        max-height: 35vh; /* Adjust the message height for smaller screens */
+    }
+
+    #channel-name {
+        font-size: 30px;
+    }
+
+    .message-image,
+    #message-media img,
+    #message-media video {
+        max-width: 90%; /* Allow images to take more space on smaller screens */
+        max-height: calc(30vh); /* Adjust image height for smaller screens */
+    }
+
+    #refreshFeed {
+        font-size: 14px;
+        padding: 8px 16px;
+    }
+}
+
+.loading-text {
+    font-size: 50px;        /* Adjust size to your preference */
+    color: #888888;         /* Grey color */
+    font-weight: bold;
+    display: flex;
+    justify-content: center; /* Horizontally center */
+    align-items: center;     /* Vertically center */
+    height: 100vh;           /* Full viewport height */
+    text-align: center;
+    margin: 0;               /* Remove any default margins */
+    direction: rtl;
+}

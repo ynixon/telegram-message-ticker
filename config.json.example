@@ -1,0 +1,8 @@
+{
+  "api_id": <Your_Telegram_API_ID>,
+  "api_hash": "<Your_Telegram_API_Hash>",
+  "port": 3005,
+  "media_folder": "media",
+  "channel_list_file": "channels.json",
+  "message_age_limit": 2
+}

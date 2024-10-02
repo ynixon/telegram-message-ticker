@@ -1,0 +1,12 @@
+# Ignore specific session files
+user_session.session
+new_session_name.session
+
+# Ignore all session files
+*.session
+
+# Ignore media directory
+/media/
+
+channels.json
+config.json
