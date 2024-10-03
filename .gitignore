@@ -1,6 +1,7 @@
 # Ignore specific session files
 user_session.session
 new_session_name.session
+user_session.session-journal
 
 # Ignore all session files
 *.session
@@ -10,3 +11,4 @@ new_session_name.session
 
 channels.json
 config.json
+/.gitignore

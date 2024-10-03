@@ -126,7 +126,8 @@ def load_channels(channel_list_file):
 
 async def get_latest_messages(telegram_client, cfg):
     """
-    Fetch the latest messages from the Telegram channels.
+    Fetch the latest messages from the Telegram channels and refresh all messages
+    based on the message_age_limit. Messages will be sorted by time in descending order.
     """
     global LATEST_MESSAGES
     all_messages = []
@@ -140,7 +141,7 @@ async def get_latest_messages(telegram_client, cfg):
         try:
             entity = await telegram_client.get_entity(channel["id"])
             messages = await asyncio.wait_for(
-                telegram_client.get_messages(entity, limit=1), timeout=5.0
+                telegram_client.get_messages(entity, limit=10), timeout=5.0
             )
             if messages:
                 for message in messages:
@@ -163,25 +164,22 @@ async def get_latest_messages(telegram_client, cfg):
                         message_content = message.message
 
                     if message.media:
-                        if (
-                            hasattr(message.media, "document")
-                            and message.media.document.mime_type == "video/mp4"
-                        ):
-                            for attribute in message.media.document.attributes:
-                                if hasattr(attribute, "file_name"):
-                                    logger.info(
-                                        "Skipping video file: %s", attribute.file_name
-                                    )
-                                    break
-                            else:
-                                logger.info(
-                                    "Skipping video file with no filename available"
-                                )
-                            continue
+                        if hasattr(
+                            message.media, "document"
+                        ) and message.media.document.mime_type.startswith("video"):
+                            logger.info(
+                                "Skipping video media for message ID: %s", message.id
+                            )
                         elif hasattr(message.media, "photo"):
-                            media_tag = ""
+                            media_path = await message.download_media(
+                                file=os.path.join(media_dir, f"{message.id}.jpg")
+                            )
+                            media_tag = f'<img src="/media/{os.path.basename(media_path)}" alt="Photo" class="message-image">'
                             message_content += media_tag
                             media_type = "photo"
+
+                    if len(message_content) > 475:
+                        message_content = message_content[:475] + "..."
 
                     if message_content:
                         all_messages.append(
@@ -189,18 +187,20 @@ async def get_latest_messages(telegram_client, cfg):
                                 "channel": channel["name"],
                                 "message": message_content,
                                 "time": message.date,
+                                "timestamp": message_time,
                                 "media_type": media_type,
                             }
                         )
         except asyncio.TimeoutError:
-            logger.warning(
+            logger.debug(
                 "Timeout while fetching messages for channel: %s", channel["name"]
             )
         except ValueError as e:
             logger.error("Could not fetch messages for %s: %s", channel["name"], e)
 
-    all_messages.sort(key=lambda x: x["time"], reverse=True)
-    LATEST_MESSAGES = {msg["channel"]: msg for msg in all_messages}
+    all_messages.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    LATEST_MESSAGES = all_messages
 
 
 def setup_push_notifications(telegram_client):
@@ -247,8 +247,8 @@ def display():
         return render_template("loading.html")
 
     valid_messages = [
-        {"channel": channel, "message": data["message"], "time": data["time"]}
-        for channel, data in LATEST_MESSAGES.items()
+        {"channel": data["channel"], "message": data["message"], "time": data["time"]}
+        for data in LATEST_MESSAGES
         if data["message"]
     ]
 
@@ -257,7 +257,7 @@ def display():
     )
 
 
-@app.route("/media/")
+@app.route("/media/<path:filename>")
 def media(filename):
     """
     Serve media files from the media directory.
@@ -284,12 +284,11 @@ def get_messages():
         if LATEST_MESSAGES:
             valid_messages = [
                 {
-                    "channel": channel,
+                    "channel": message_data["channel"],
                     "message": message_data["message"],
                     "time": str(message_data["time"]),
                 }
-                for channel, message_data in LATEST_MESSAGES.items()
-                if message_data["message"]
+                for message_data in LATEST_MESSAGES
             ]
             return jsonify({"messages": valid_messages})
         else:
@@ -315,25 +314,34 @@ def run_flask(cfg):
 
 async def run_telethon_client(cfg):
     """
-    Run the Telethon client for fetching messages.
+    Run the Telethon client for fetching messages and ensure reconnection on disconnection.
     """
     global TELEGRAM_CLIENT, STOP_EVENT_LOOP
     TELEGRAM_CLIENT = TelegramClient("user_session", cfg["api_id"], cfg["api_hash"])
 
-    await TELEGRAM_CLIENT.connect()
-    if not await TELEGRAM_CLIENT.is_user_authorized():
-        await TELEGRAM_CLIENT.send_code_request(cfg["phone_number"])
-        await TELEGRAM_CLIENT.sign_in(
-            cfg["phone_number"], input("Enter the code you received: ")
-        )
-
-    setup_push_notifications(TELEGRAM_CLIENT)
-
     while not STOP_EVENT_LOOP:
-        await get_latest_messages(TELEGRAM_CLIENT, cfg)
-        delete_old_files(cfg["media_folder"])
-        await process_queue()
-        await asyncio.sleep(5)
+        try:
+            await TELEGRAM_CLIENT.connect()
+            if not await TELEGRAM_CLIENT.is_user_authorized():
+                await TELEGRAM_CLIENT.send_code_request(cfg["phone_number"])
+                await TELEGRAM_CLIENT.sign_in(
+                    cfg["phone_number"], input("Enter the code you received: ")
+                )
+
+            setup_push_notifications(TELEGRAM_CLIENT)
+
+            while not STOP_EVENT_LOOP:
+                await get_latest_messages(TELEGRAM_CLIENT, cfg)
+                delete_old_files(cfg["media_folder"])
+                await process_queue()
+                await asyncio.sleep(5)
+
+        except (ConnectionError, asyncio.TimeoutError) as e:
+            logger.error("Connection lost: %s. Reconnecting in 5 seconds...", e)
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error("Unexpected error: %s", e)
+            break
 
 
 def main(args):
@@ -427,8 +435,8 @@ if __name__ == "__main__":
             default=2,
         )
 
-        args = parser.parse_args()  # Changed from parsed_args to args
-        main(args)  # Passes the renamed variable
+        args = parser.parse_args()
+        main(args)
     except KeyboardInterrupt:
         logger.info("Stopping the application...")
         shutdown()

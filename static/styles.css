@@ -40,8 +40,17 @@ body {
     margin: 0 auto;
     display: inline-block;
     max-height: calc(50vh); /* Limit message height to half of the viewport */
-    overflow-y: auto; /* Enable scrolling for long messages */
+    overflow: hidden; /* Hide overflow to prevent scroll bars */
+    text-overflow: ellipsis; /* Add ellipsis (...) for clipped content */
     direction: rtl;
+}
+
+#message-text a {
+    font-size: 30px; /* Set smaller font size for links */
+    color: blue; /* Optional: adjust link color */
+    text-decoration: underline; /* Optional: underline for better visibility */
+    display: block; /* Forces the link to appear on a new line */
+    margin-top: 10px; /* Optional: add space above the link */
 }
 
 .message-image {
