@@ -112,24 +112,24 @@ $(document).ready(function () {
             var channelName = messageData.channel;
             var message = extractMessageContent(messageData);
 
-            // Updated messageTime to explicitly convert from UTC to the correct timezone
-            var messageDateUTC = new Date(messageData.time + 'Z'); // Ensure the time is treated as UTC by appending 'Z'
+            // Parse the message time as UTC, and get the current time in UTC
+            var messageDateUTC = new Date(messageData.time + 'Z'); // Add 'Z' to ensure it's treated as UTC
             var options = { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
             var messageTime = new Intl.DateTimeFormat('he-IL', options).format(messageDateUTC);
 
-
-            var currentTime = new Date();
-            var messageDate = new Date(messageData.time);
-            var timeDifference = (currentTime - messageDate) / (1000 * 60);  // in minutes
+            var currentTime = new Date(); // Current local time
+            var currentTimeUTC = new Date(currentTime.toISOString()); // Convert to UTC for consistency
+            // Calculate time difference in minutes
+            var timeDifference = (currentTimeUTC - messageDateUTC) / (1000 * 60);
 
             $("#channel-name").text(channelName);
             $("#message-text").html(message);
 
             // Change text color based on message age
             if (timeDifference <= 60) {  // Less than or equal to 1 hour
-                $("#message-time").css("color", "green");
+                $("#message-time").removeClass("old-message").addClass("recent-message");
             } else {
-                $("#message-time").css("color", "");
+                $("#message-time").removeClass("recent-message").addClass("old-message");
             }
 
             $("#message-time").text("נשלח ב: " + messageTime);
@@ -141,12 +141,13 @@ $(document).ready(function () {
             // Check if the message contains a video
             var videoElement = $("#message-media").find("video");
             if (videoElement.length > 0) {
-                videoElement.on('ended', function () {
+                // Wait until the video finishes playing before showing the next message
+                videoElement.off('ended').on('ended', function () {
                     isDisplaying = false;
                     showMessage();
                 });
             } else {
-                // Set timeout to show next message after 5 seconds
+                // Set timeout to show next message after 5 seconds (only if no video is present)
                 timeoutId = setTimeout(function() {
                     isDisplaying = false;
                     showMessage();

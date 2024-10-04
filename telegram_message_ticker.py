@@ -6,12 +6,12 @@ import asyncio
 import time
 import logging
 import signal
-import datetime  # <-- Add this line
+import datetime
 from argparse import ArgumentParser
 from flask import Flask, jsonify, render_template, redirect, url_for, send_from_directory, request
 from flask_socketio import SocketIO, emit  # Import SocketIO
 from telethon import TelegramClient, events
-import requests  # Added import
+import requests
 
 
 app = Flask(__name__)
@@ -60,7 +60,8 @@ def delete_old_files(media_dir):
         file_path = os.path.join(media_dir, filename)
         if os.path.isfile(file_path):
             file_mod_time = os.path.getmtime(file_path)
-            if now - file_mod_time > 300:
+            message_age_limit = CONFIG.get("message_age_limit", 2) * 3600  # Convert hours to seconds
+            if now - file_mod_time > message_age_limit:
                 try:
                     os.remove(file_path)
                     logger.info(f"Deleted old file: {file_path}")
@@ -423,26 +424,40 @@ def run_telethon_client(cfg):
 
     async def start_telegram_client():
         global TELEGRAM_CLIENT
-        TELEGRAM_CLIENT = TelegramClient("user_session", cfg["api_id"], cfg["api_hash"])
+        session_file = "user_session.session"  # Use a consistent session file name
+        TELEGRAM_CLIENT = TelegramClient(session_file, cfg["api_id"], cfg["api_hash"])
+        attempt = 0  # Counter for retry attempts
 
-        try:
-            await TELEGRAM_CLIENT.start(phone=cfg["phone_number"])
-            setup_push_notifications(TELEGRAM_CLIENT)
+        while not STOP_EVENT_LOOP:
+            try:
+                if not TELEGRAM_CLIENT.is_connected():
+                    await TELEGRAM_CLIENT.connect()
 
-            while not STOP_EVENT_LOOP:
-                try:
+                if not await TELEGRAM_CLIENT.is_user_authorized():
+                    await TELEGRAM_CLIENT.send_code_request(cfg["phone_number"])
+                    await TELEGRAM_CLIENT.sign_in(cfg["phone_number"], input('Enter the code: '))
+                    TELEGRAM_CLIENT.session.save()  # Save session after signing in
+
+                setup_push_notifications(TELEGRAM_CLIENT)
+
+                # Main message processing loop
+                while not STOP_EVENT_LOOP:
                     await get_latest_messages(TELEGRAM_CLIENT, cfg)
                     delete_old_files(cfg["media_folder"])
-                    await asyncio.sleep(5)
-                except Exception as e:
-                    logger.error(f"Error fetching messages: {e}")
-                    shutdown()  # Signal shutdown on error
-        except Exception as e:
-            logger.error(f"Error in Telethon client: {e}")
-            shutdown()  # Signal shutdown on error
-        finally:
-            if TELEGRAM_CLIENT.is_connected():
-                await TELEGRAM_CLIENT.disconnect()
+                    await asyncio.sleep(10)  # Throttle to avoid hitting rate limits
+            except Exception as e:
+                attempt += 1
+                logger.error(f"Error in Telethon client (Attempt {attempt}): {e}")
+
+                # Incremental backoff to avoid rapid retries
+                backoff = min(30, attempt * 5)
+                logger.info(f"Attempting to reconnect after {backoff} seconds...")
+                await asyncio.sleep(backoff)
+
+                if attempt > 5:
+                    logger.error("Too many reconnection attempts. Stopping client.")
+                    shutdown()  # Gracefully shutdown after multiple failures
+                    break
 
     # Create and share the event loop for the thread
     telethon_event_loop = asyncio.new_event_loop()
@@ -457,6 +472,20 @@ def run_telethon_client(cfg):
     except Exception as e:
         logger.error(f"Critical error in Telethon event loop: {e}")
         shutdown()  # Signal shutdown on critical error
+    finally:
+        # Ensure Telegram client disconnects properly
+        if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected():
+            try:
+                future = asyncio.run_coroutine_threadsafe(TELEGRAM_CLIENT.disconnect(), telethon_event_loop)
+                future.result(timeout=5)
+                logger.info("Telegram client disconnected.")
+            except Exception as e:
+                logger.error(f"Error disconnecting Telethon client: {e}")
+
+        # Ensure all asyncio event loops are stopped
+        if telethon_event_loop and not telethon_event_loop.is_closed():
+            telethon_event_loop.call_soon_threadsafe(telethon_event_loop.stop)
+            telethon_event_loop.close()
 
 
 def shutdown_handler(signal_received, frame):
@@ -524,7 +553,7 @@ def main(args):
 
     global flask_thread, telethon_thread
     # Start Telethon thread first to initialize the event loop
-    telethon_thread = threading.Thread(target=run_telethon_client, args=(cfg,), daemon=True)
+    telethon_thread = threading.Thread(target=lambda: asyncio.run(run_telethon_client(cfg)), daemon=True)
     telethon_thread.start()
 
     # Wait until the Telethon event loop is ready

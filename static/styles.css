@@ -134,3 +134,13 @@ body {
     margin: 0;               /* Remove any default margins */
     direction: rtl;
 }
+
+/* Recent message time - green color */
+#message-time.recent-message {
+    color: green;
+}
+
+/* Old message time - grey color */
+#message-time.old-message {
+    color: #bbbbbb;
+}
