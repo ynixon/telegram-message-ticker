@@ -153,24 +153,36 @@ def load_channels(channel_list_file):
 
 def setup_push_notifications(telegram_client):
     @telegram_client.on(events.NewMessage(chats=[channel["id"] for channel in CHANNELS]))
-    async def new_message_listener(event):  # Define as async function
+    async def new_message_listener(event):
         global REFRESH_FLAG
         try:
             if event.message.message:
                 REFRESH_FLAG = True
                 channel_title = event.chat.title if event.chat else "Unknown Channel"
                 logger.info(f"New message received in {channel_title}.")
+                
+                # Push the new message immediately
+                message_data = {
+                    "channel": channel_title,
+                    "message": event.message.message,
+                    "time": event.message.date.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                broadcast_new_message(message_data, is_push=True)
         except Exception as e:
             logger.error(f"Error in new_message_listener: {e}")
             shutdown()  # Signal shutdown on error
 
 
-def broadcast_new_message(message_data):
+def broadcast_new_message(message_data, is_push=False):
     # Ensure 'time' is a string
     if isinstance(message_data.get("time"), datetime.datetime):
         message_data["time"] = message_data["time"].strftime('%Y-%m-%d %H:%M:%S')
     else:
         message_data["time"] = str(message_data["time"])
+
+    # Add push indication
+    message_data["is_push"] = is_push
+
     logger.debug(f"Broadcasting new_message: {message_data}")
     socketio.emit('new_message', {'message': message_data})
 

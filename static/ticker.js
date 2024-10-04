@@ -30,26 +30,45 @@ $(document).ready(function () {
     });
 
     // 4. Listen for new messages
-    socket.on('new_message', function(data) {
-        if (!data.message) {
-            console.debug("Received new_message without 'message' field:", data);
-            return;
+    socket.on('new_message', function (data) {
+        var messageData = data.message;
+        var channelName = messageData.channel;
+        var message = extractMessageContent(messageData);
+
+        var messageTime = new Date(messageData.time).toLocaleString('he-IL', {
+            timeZone: 'Asia/Jerusalem', 
+            year: 'numeric', 
+            month: '2-digit', 
+            day: '2-digit', 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit', 
+            hour12: false
+        });
+
+        $("#channel-name").text(channelName);
+        $("#message-text").html(message);
+        $("#message-time").text("נשלח ב: " + messageTime);
+
+        // Indicate if the message is a push notification
+        if (messageData.is_push) {
+            $("#push-indicator").text("הודעת פוש התקבלה!").show(); // Show a push indication
+        } else {
+            $("#push-indicator").hide(); // Hide the indication for non-push messages
         }
 
-        // Add new message to the beginning
-        messages.unshift(data.message);
-        console.debug("New message received:", data.message);
-
-        // If currently displaying a message, interrupt and show the new one
-        if (isDisplaying) {
-            clearTimeout(timeoutId);
-            currentIndex = 0;
-            showMessage();
-        } else {
-            // If not displaying, start showing messages
-            if (messages.length === 1) { // Only the new message exists
+        // Your existing code for handling videos or timeouts
+        var videoElement = $("#message-media").find("video");
+        if (videoElement.length > 0) {
+            videoElement.off('ended').on('ended', function () {
+                isDisplaying = false;
                 showMessage();
-            }
+            });
+        } else {
+            timeoutId = setTimeout(function() {
+                isDisplaying = false;
+                showMessage();
+            }, 5000);
         }
     });
 
