@@ -53,6 +53,7 @@ channel_message_counters = {}  # Dictionary to hold per-channel message counts
 # Lock for thread-safe operations on LATEST_MESSAGES
 messages_lock = threading.Lock()
 
+
 def delete_old_files(media_dir):
     now = time.time()
     for filename in os.listdir(media_dir):
@@ -65,6 +66,7 @@ def delete_old_files(media_dir):
                     logger.info(f"Deleted old file: {file_path}")
                 except Exception as e:
                     logger.error(f"Failed to delete {file_path}: {e}")
+
 
 def load_config(args):
     cfg = {
@@ -160,6 +162,7 @@ def setup_push_notifications(telegram_client):
         except Exception as e:
             logger.error(f"Error in new_message_listener: {e}")
             shutdown()  # Signal shutdown on error
+
 
 def broadcast_new_message(message_data):
     # Ensure 'time' is a string
@@ -343,11 +346,15 @@ def handle_connect(auth):
 def media(filename):
     return send_from_directory(CONFIG["media_folder"], filename)
 
+
+
 @app.route("/start-over")
 def start_over():
     global REFRESH_FLAG
     REFRESH_FLAG = False
     return redirect(url_for("display"))
+
+
 
 @app.route("/getMessages")
 def get_messages():
@@ -387,7 +394,7 @@ def shutdown_server():
     if secret_token != os.getenv("SHUTDOWN_TOKEN"):
         logger.warning("Unauthorized shutdown attempt.")
         return 'Unauthorized', 401
-    
+
     logger.info('Shutting down the Flask-SocketIO server...')
     try:
         # Use SocketIO's stop method
@@ -408,7 +415,6 @@ def run_flask(cfg):
     except Exception as e:
         logger.error(f"Error running Flask server: {e}")
         shutdown()  # Signal shutdown on error
-
 
 
 def run_telethon_client(cfg):
@@ -456,6 +462,7 @@ def run_telethon_client(cfg):
 def shutdown_handler(signal_received, frame):
     logger.info("SIGINT or CTRL-C detected. Stopping gracefully...")
     shutdown()
+
 
 def shutdown():
     global STOP_EVENT_LOOP
