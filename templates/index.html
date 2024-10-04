@@ -1,22 +1,25 @@
 <!DOCTYPE html>
-<html lang="he">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Message Ticker</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <title>Telegram Message Ticker</title>
+    <!-- 1. Include Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- 2. Include jQuery -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <!-- 3. Include Your Custom Script -->
+    <script src="{{ url_for('static', filename='ticker.js') }}"></script>
+    <!-- 4. Include Your CSS (if any) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <div id="ticker-container">
-        <div class="ticker-item">
-            <div class="channel-name" id="channel-name"></div>
-            <div class="message-text" id="message-text"></div>
-            <div class="message-media" id="message-media"></div> <!-- Added for media display -->
-            <div class="message-time" id="message-time"></div>
-        </div>            
+    <h1>Telegram Message Ticker</h1>
+    <div id="messages">
+        <h2 id="channel-name"></h2>
+        <div id="message-text"></div>
+        <div id="message-media"></div>
+        <div id="message-time"></div>
     </div>
-    <button id="refreshFeed">רענן פיד</button>
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="/static/ticker.js"></script>
+    <button id="refreshFeed">Refresh Feed</button>
 </body>
 </html>
