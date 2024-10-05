@@ -1,18 +1,20 @@
 $(document).ready(function () {
-    // 1. Check if Socket.IO is loaded
-    if (typeof io === 'undefined') {
-        console.error("Socket.IO is not loaded. Please check the script tag and integrity attribute.");
-        alert("Failed to load Socket.IO. Please check the browser console for more details.");
-        return;
-    }
+    // Socket.IO configuration with reconnection settings
+    var socket = io({
+        reconnection: true,             // Ensure reconnection is enabled
+        reconnectionAttempts: Infinity, // Retry indefinitely until connected
+        reconnectionDelay: 1000,        // Wait 1 second before the first attempt
+        reconnectionDelayMax: 5000,     // Maximum delay between retries is 5 seconds
+        timeout: 20000,                 // Wait 20 seconds for a response from the server
+    });
 
-    var socket = io();
     var currentIndex = 0;
     var messages = [];
     var timeoutId = null;
     var backupTimeoutId = null;
     var isDisplaying = false;
-    var totalMessagesReceived = 0;  // Added variable to track total messages received
+    var totalMessagesReceived = 0;
+    var isConnected = true;  // Flag to track connection state
 
     // Handle both initial and new messages in a unified way
     function addMessages(newMessages) {
@@ -23,31 +25,66 @@ $(document).ready(function () {
 
         // Add new messages and keep only unique ones
         newMessages.forEach((newMessage) => {
-            // Optional: Check for duplicates based on 'id'
             if (!messages.some((message) => message.id === newMessage.id)) {
                 messages.push(newMessage);
             }
         });
 
-        // Update the total messages received counter
         totalMessagesReceived += newMessages.length;
 
-        // Log the counts
         console.log("Number of new messages received:", newMessages.length);
         console.log("Total messages received from server so far:", totalMessagesReceived);
 
         // Sort messages by time descending
         messages = messages.sort((a, b) => new Date(b.time) - new Date(a.time));
-        console.log("Updated messages array:", messages);
 
         console.debug("Messages updated, new message list:", messages);
         console.debug("isDisplaying before showing the next message:", isDisplaying);
 
-        // Start showing messages if not currently displaying
-        if (!isDisplaying) {
-            showMessage();  // Do not reset currentIndex here
+        if (!isDisplaying && isConnected) {
+            showMessage();  
         }
     }
+
+    // Handle successful connection
+    socket.on('connect', function () {
+        console.log('Successfully connected to the server.');
+        $("#push-indicator").hide();  // Hide the lost connection message when reconnected
+        isConnected = true;  // Set connection flag to true
+        if (!isDisplaying && messages.length > 0) {
+            showMessage();  // Resume showing messages when reconnected
+        }
+    });
+
+    // Handle connection loss
+    socket.on('disconnect', function () {
+        console.warn('Lost connection to the server.');
+        $("#push-indicator").text('החיבור לשרת אבד. מנסה להתחבר מחדש...').show();  // Show lost connection message
+        isConnected = false;  // Set connection flag to false
+        stopMessageDisplay();  // Stop displaying messages until reconnected
+    });
+
+    // Handle reconnection attempts
+    socket.on('reconnect_attempt', function (attempt) {
+        console.log(`Reconnection attempt ${attempt}`);
+    });
+
+    // Handle reconnection success
+    socket.on('reconnect', function () {
+        console.log('Reconnected to the server.');
+        $("#push-indicator").hide();  // Hide the lost connection message when reconnected
+        isConnected = true;  // Set connection flag to true
+        if (!isDisplaying && messages.length > 0) {
+            showMessage();  // Resume showing messages when reconnected
+        }
+    });
+
+    // Handle reconnection failure after max attempts
+    socket.on('reconnect_failed', function () {
+        console.error('Failed to reconnect to the server.');
+        $("#push-indicator").text('לא ניתן להתחבר לשרת. אנא נסה שוב מאוחר יותר.').show();  // Show permanent lost connection message
+        isConnected = false;  // Ensure the flag remains false if reconnection fails
+    });
 
     // Listen for initial messages from server
     socket.on('initial_messages', function (data) {
@@ -56,16 +93,22 @@ $(document).ready(function () {
         console.log("Number of initial messages received:", data.messages.length);
     });
 
-    // In the socket.on('new_message') handler
+    // Handle incoming new messages
     socket.on('new_message', function (data) {
         console.debug("Received new message:", data);
-        addMessages([data]);  // Correct: Passing the entire message object
+        addMessages([data]);  
     });
 
-    // Optionally handle the total_processed event if the server sends it
     socket.on('total_processed', function (data) {
         console.log('Total messages processed by server:', data.count);
     });
+
+    // Stop displaying messages when disconnected
+    function stopMessageDisplay() {
+        clearTimeout(timeoutId);
+        clearTimeout(backupTimeoutId);
+        isDisplaying = false;
+    }
 
     // Function to extract and display message content
     function extractMessageContent(messageData) {
@@ -74,18 +117,16 @@ $(document).ready(function () {
         let messageText = messageData.message || "";
         if (typeof messageText !== 'string') {
             console.error("messageText is not a string:", messageText);
-            messageText = String(messageText); // Convert to string
+            messageText = String(messageText);
         }
 
-        $("#message-media").html(''); // Clear previous media
+        $("#message-media").html(''); 
 
         const imageRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
         const videoRegex = /<video[^>]+src="([^"]+)"[^>]*>/g;
 
-        // Remove media tags from the message text, since media should be handled separately
         let cleanedMessage = messageText.replace(imageRegex, '').replace(videoRegex, '');
 
-        // Handle images
         let imageMatch;
         while ((imageMatch = imageRegex.exec(messageText)) !== null) {
             if (imageMatch[1]) {
@@ -95,7 +136,6 @@ $(document).ready(function () {
             }
         }
 
-        // Handle videos
         let videoMatch;
         while ((videoMatch = videoRegex.exec(messageText)) !== null) {
             if (videoMatch[1]) {
@@ -110,11 +150,16 @@ $(document).ready(function () {
             }
         }
 
-        return cleanedMessage; // Return the cleaned message text without media tags
+        return cleanedMessage;
     }
 
-    // Fetch messages continuously, but keep displaying existing ones
+    // Function to show a message
     function showMessage() {
+        if (!isConnected) {
+            console.warn("Cannot display messages while disconnected.");
+            return;  // Don't show messages while disconnected
+        }
+
         if (messages.length === 0) {
             console.warn("No messages to display yet.");
             isDisplaying = false;
@@ -122,7 +167,7 @@ $(document).ready(function () {
         }
 
         if (currentIndex >= messages.length) {
-            currentIndex = 0; // Reset to the beginning once we reach the end
+            currentIndex = 0; 
         }
 
         var messageData = messages[currentIndex];
@@ -133,25 +178,18 @@ $(document).ready(function () {
             var channelName = messageData.channel;
             var message = extractMessageContent(messageData);
 
-            // Parse the message time as UTC, and get the current time in UTC
             var messageDateUTC = new Date(messageData.time);
             if (isNaN(messageDateUTC.getTime())) {
                 console.error("Invalid message date:", messageData.time);
                 return;
             }            
-            var currentTime = new Date(); // Current local time
-            var currentTimeUTC = new Date(currentTime.toISOString()); // Convert to UTC for consistency
+            var currentTime = new Date(); 
+            var currentTimeUTC = new Date(currentTime.toISOString()); 
 
-            // Calculate time difference in minutes
             var timeDifference = (currentTimeUTC - messageDateUTC) / (1000 * 60);
 
             console.debug("Message date UTC:", messageDateUTC);
             console.debug("Current time UTC:", currentTimeUTC);
-            if (isNaN(messageDateUTC)) {
-                console.error("Invalid message date:", messageData.time);
-                return;
-            }
-            console.debug("Time difference in minutes:", timeDifference);
 
             var options = {
                 timeZone: 'Asia/Jerusalem',
@@ -168,8 +206,7 @@ $(document).ready(function () {
             $("#channel-name").text(channelName);
             $("#message-text").html(message);
     
-            // Change text color based on message age
-            if (timeDifference <= 60) {  // Less than or equal to 1 hour
+            if (timeDifference <= 60) {  
                 $("#message-time").removeClass("old-message").addClass("recent-message");
             } else {
                 $("#message-time").removeClass("recent-message").addClass("old-message");
@@ -177,30 +214,23 @@ $(document).ready(function () {
     
             $("#message-time").text("נשלח ב: " + messageTime);
     
-            // Handle the push indicator
             if (messageData.is_push) {
-                $("#push-indicator").text("הודעת פוש התקבלה!").show(); // Show the push indicator
+                $("#push-indicator").text("הודעת פוש התקבלה!").show();
             } else {
-                $("#push-indicator").hide(); // Hide the push indicator for non-push messages
+                $("#push-indicator").hide();
             }
 
-            // Increment currentIndex for the next message
-            console.debug("Current index before increment:", currentIndex);
             currentIndex = (currentIndex + 1) % messages.length;
-            console.debug("Current index after increment:", currentIndex);
 
-            // Clear previous timeouts
             clearTimeout(timeoutId);
             clearTimeout(backupTimeoutId);
 
-            // Set up timeout for the next message
             timeoutId = setTimeout(function () {
                 console.debug("Timeout for next message reached, moving to next message.");
                 isDisplaying = false;
                 showMessage();
             }, 5000);
 
-            // Additional backup timeout
             backupTimeoutId = setTimeout(function () {
                 if (isDisplaying) {
                     console.debug("Backup timeout reached, forcing next message.");
@@ -213,8 +243,7 @@ $(document).ready(function () {
         }
     }
 
-    // Refresh Feed Button Handler
     $("#refreshFeed").on('click', function () {
-        location.reload();  // Reload the page to fetch new messages
+        location.reload();
     });
 });

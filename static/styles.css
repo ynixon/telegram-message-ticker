@@ -144,3 +144,12 @@ body {
 #message-time.old-message {
     color: #bbbbbb;
 }
+
+/* Connection Lost Message */
+.connection-lost {
+    font-size: 40px;
+    color: #ff4c4c;  /* Red color to indicate a problem */
+    font-weight: bold;
+    text-align: center;
+    margin: 20px;
+}

@@ -9,7 +9,8 @@ import logging
 import signal
 import datetime
 import re
-from bs4 import BeautifulSoup, NavigableString, Tag
+import eventlet
+from bs4 import BeautifulSoup
 from argparse import ArgumentParser
 from flask import (
     Flask,
@@ -19,6 +20,7 @@ from flask import (
     url_for,
     send_from_directory,
     request,
+    Response
 )
 from flask_socketio import SocketIO, emit  # Import SocketIO
 from telethon import TelegramClient, events
@@ -26,7 +28,8 @@ import requests
 
 
 app = Flask(__name__)
-socketio = SocketIO(app)  # Initialize SocketIO
+socketio = SocketIO(app, async_mode="eventlet")
+
 
 LATEST_MESSAGES = []
 CHANNELS = []
@@ -43,12 +46,12 @@ app.config["JSON_AS_ASCII"] = False
 
 # Initialize logging with timestamps
 logging.basicConfig(
-    level=logging.WARN,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
+# logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 flask_thread = None
 telethon_thread = None
@@ -172,7 +175,13 @@ def setup_push_notifications(telegram_client):
     async def new_message_listener(event):
         global REFRESH_FLAG
         try:
-            if event.message.message:
+            message_content = ""
+            if hasattr(event.message, "message") and event.message.message:
+                message_content = event.message.message
+            elif hasattr(event.message, "caption") and event.message.caption:
+                message_content = event.message.caption
+
+            if message_content:
                 REFRESH_FLAG = True
                 channel_title = event.chat.title if event.chat else "Unknown Channel"
                 logger.info(f"New message received in {channel_title}.")
@@ -180,7 +189,7 @@ def setup_push_notifications(telegram_client):
                 # Push the new message immediately
                 message_data = {
                     "channel": channel_title,
-                    "message": event.message.message,
+                    "message": message_content,
                     "time": event.message.date.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 broadcast_new_message(message_data, is_push=True)
@@ -190,35 +199,24 @@ def setup_push_notifications(telegram_client):
 
 
 def extract_and_replace_urls(message_content):
-    # Parse the message content as HTML
-    soup = BeautifulSoup(message_content, "html.parser")
+    logger.debug(f"Original message content before URL extraction: {message_content}")
 
-    # Function to recursively replace URLs in text nodes
-    def replace_in_text_nodes(element):
-        for child in element.contents:
-            if isinstance(child, NavigableString):
-                # Skip if parent is an anchor tag
-                if child.parent.name == "a":
-                    continue
+    # Regular expression to find URLs
+    url_regex = re.compile(r'(https?://[^\s<>"\'\)]+)', re.UNICODE)
 
-                # Replace URLs in the text node
-                new_text = re.sub(
-                    r"(?P<url>https?://[^\s<]+)",
-                    lambda match: create_anchor_tag(match.group(0)),
-                    str(child),
-                )
-                if new_text != str(child):
-                    # Replace the text node with new content
-                    child.replace_with(BeautifulSoup(new_text, "html.parser"))
-            elif isinstance(child, Tag):
-                # Recursively process child tags
-                if child.name != "a":  # Do not process inside <a> tags
-                    replace_in_text_nodes(child)
+    # Function to replace URLs with anchor tags
+    def replace_url(match):
+        url = match.group(1)
+        title = fetch_url_title(url)
+        # Return the proper anchor tag without nesting <a> tags inside href
+        return f'<a href="{url}" target="_blank">{url}</a>'
 
-    replace_in_text_nodes(soup)
-    remove_duplicate_links(soup)
+    # Replace URLs in the message content
+    processed_content = url_regex.sub(replace_url, message_content)
 
-    return str(soup)
+    logger.debug(f"Processed message content after URL extraction: {processed_content}")
+
+    return processed_content
 
 
 def create_anchor_tag(url):
@@ -227,39 +225,33 @@ def create_anchor_tag(url):
 
 
 def fetch_url_title(url):
+    """
+    Fetches the HTML title of the given URL.
+
+    Args:
+        url (str): The URL to fetch.
+
+    Returns:
+        str: The title of the webpage or the URL itself if the title cannot be fetched.
+    """
     try:
         logger.info(f"Attempting to fetch the title for URL: {url}")
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; Bot/1.0; +http://example.com/bot)"
         }
         response = requests.get(url, timeout=5, headers=headers)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, "html.parser")
-            if soup.title and soup.title.string:
-                title = soup.title.string.strip()
-                logger.info(f"Fetched title for URL: {url} -> Title: {title}")
-            else:
-                title = url  # Use the URL as the title if none found
-                logger.warning(f"No title found in HTML for URL: {url}")
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, "html.parser")
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+            logger.info(f"Fetched title for URL: {url} -> Title: {title}")
         else:
-            title = url
-            logger.warning(
-                f"Failed to get a successful response for URL: {url}, status code: {response.status_code}"
-            )
+            title = url  # Use the URL as the title if none found
+            logger.warning(f"No title found in HTML for URL: {url}")
     except Exception as e:
         logger.error(f"Error fetching URL title for {url}: {e}")
         title = url  # Use the URL as the title in case of error
     return title
-
-
-def remove_duplicate_links(soup):
-    seen_links = set()
-    for a_tag in soup.find_all("a"):
-        href = a_tag.get("href")
-        if href in seen_links:
-            a_tag.decompose()  # Remove the duplicate link
-        else:
-            seen_links.add(href)
 
 
 def broadcast_new_message(message_data, is_push=False):
@@ -324,10 +316,7 @@ def download_and_update_message(
             # Update the message in LATEST_MESSAGES
             with messages_lock:
                 for msg in LATEST_MESSAGES:
-                    if (
-                        msg["timestamp"] == message.date.timestamp()
-                        and msg["channel"] == channel_name
-                    ):
+                    if msg["id"] == message.id and msg["channel"] == channel_name:
                         msg["message"] += media_tag
                         msg["media_type"] = media_type
                         logger.info(f"Updated message ID {message.id} with media.")
@@ -369,7 +358,6 @@ async def get_latest_messages(telegram_client, cfg):
             logger.info(f"Fetched {fetched_messages} message from {channel_name}")
 
             for message in messages:
-                # Log message details
                 logger.debug(
                     f"Processing message ID {message.id} from '{channel_name}'"
                 )
@@ -378,85 +366,59 @@ async def get_latest_messages(telegram_client, cfg):
                 )
 
                 # Check if this message has already been processed
-                if LAST_PROCESSED_MESSAGE[channel_id] == message.id:
+                if LAST_PROCESSED_MESSAGE.get(channel_id) == message.id:
                     logger.info(
                         f"Skipped message ID {message.id} from '{channel_name}': Duplicate message."
                     )
                     continue  # Skip already processed messages
 
-                # Use message.date directly; it's already a datetime object
-                message_time = message.date
-                # Ensure message_time is timezone-aware in UTC
-                if message_time.tzinfo is None:
-                    message_time = message_time.replace(tzinfo=datetime.timezone.utc)
-                else:
-                    message_time = message_time.astimezone(datetime.timezone.utc)
+                # Validate the event loop before proceeding
+                if not telethon_event_loop or not telethon_event_loop.is_running():
+                    logger.error(
+                        "Telethon event loop is not running or has been stopped."
+                    )
+                    return  # Avoid further processing if the loop isn't valid
 
-                # Get current time in UTC
+                message_time = message.date.replace(tzinfo=datetime.timezone.utc)
                 current_time = datetime.datetime.now(datetime.timezone.utc)
                 time_diff_in_hours = (
                     current_time - message_time
                 ).total_seconds() / 3600
 
-                logger.info(
-                    f"Message time: {message_time}, "
-                    f"Current time: {current_time}, "
-                    f"Time difference in hours: {time_diff_in_hours}, "
-                    f"Message Age Limit: {message_age_limit}"
-                )
-
                 if time_diff_in_hours > message_age_limit:
                     logger.info(
                         f"Skipped message ID {message.id} from '{channel_name}': Older than {message_age_limit} hours."
                     )
-                    continue  # Skip old messages
-                else:
+                    continue
+
+                message_content = (
+                    message.message
+                    if hasattr(message, "message")
+                    else (message.caption or "")
+                )
+                message_content = extract_and_replace_urls(message_content)
+
+                if not message_content.strip():
                     logger.info(
-                        f"Adding message ID {message.id} from '{channel_name}' timestamp '{message_time}'"
+                        f"Skipped message ID {message.id} from '{channel_name}': Empty message content."
                     )
+                    continue
 
-                message_content = ""
-                media_type = "text"
-
-                logger.debug(
-                    f"Message content for message ID {message.id}: {message_content}"
-                )
-
-                if message.message:
-                    message_content = message.message
-                    if isinstance(message_content, bytes):
-                        message_content = message_content.decode("utf-8")
-                    # Ensure message_content is a string
-                    if not isinstance(message_content, str):
-                        message_content = str(message_content)
-
-                # Log about to add message
-                logger.debug(
-                    f"Adding message ID {message.id} from '{channel_name}' with content length {len(message_content)}."
-                )
-
-                # Add message without media first
                 with messages_lock:
                     LATEST_MESSAGES.append(
                         {
-                            "id": message.id,  # Add message ID here
+                            "id": message.id,
                             "channel": channel_name,
                             "message": message_content,
                             "time": message.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "timestamp": message_time,
-                            "media_type": media_type,
+                            "media_type": "text",
                         }
                     )
                     total_messages_processed += 1
                     channel_message_counters[channel_id] += 1
-                    logger.info(
-                        f"Added message #{channel_message_counters[channel_id]} from channel '{channel_name}' timestamp '{message_time}' (Total Processed: {total_messages_processed})"
-                    )
+                    LAST_PROCESSED_MESSAGE[channel_id] = message.id
 
-                # Update the last processed message ID for the channel
-                LAST_PROCESSED_MESSAGE[channel_id] = message.id
-
-                # If media exists, download asynchronously and update the message
                 if message.media:
                     download_and_update_message(
                         telegram_client, message, media_dir, channel_id, channel_name
@@ -464,18 +426,27 @@ async def get_latest_messages(telegram_client, cfg):
 
         except Exception as e:
             logger.error(f"Error fetching messages for {channel_name}: {e}")
-            shutdown()  # Signal shutdown on error
+            shutdown()
             raise SystemExit(f"Stopping application due to error: {e}")
 
-    # Sort messages after processing
     with messages_lock:
-        LATEST_MESSAGES.sort(key=lambda x: x["timestamp"], reverse=True)
+        LATEST_MESSAGES = LATEST_MESSAGES[:MAX_LATEST_MESSAGES]
         logger.debug(
             f"Current LATEST_MESSAGES ({len(LATEST_MESSAGES)}): {LATEST_MESSAGES}"
         )
 
     logger.info(f"Total messages fetched: {total_messages_fetched}")
     logger.info(f"Total messages processed: {total_messages_processed}")
+
+@app.errorhandler(ConnectionAbortedError)
+def handle_aborted_connection(e):
+    logger.warning(f"Connection aborted: {e}")
+    return jsonify({"error": "Connection aborted"}), 500
+
+
+@app.route("/test")
+def test():
+    return "Flask server is running"
 
 
 @app.route("/")
@@ -522,9 +493,40 @@ def handle_connect(auth):
     emit("initial_messages", {"messages": valid_messages})
 
 
+@socketio.on("disconnect")
+def handle_disconnect():
+    logger.info("Client disconnected")
+
+
 @app.route("/media/<path:filename>")
 def media(filename):
-    return send_from_directory(CONFIG["media_folder"], filename)
+    media_path = os.path.join(CONFIG["media_folder"], filename)
+    range_header = request.headers.get('Range', None)
+    if not range_header:
+        return send_from_directory(CONFIG["media_folder"], filename)
+
+    size = os.path.getsize(media_path)
+    byte1, byte2 = 0, None
+    match = re.search(r'(\d+)-(\d*)', range_header)
+    if match:
+        groups = match.groups()
+        byte1 = int(groups[0])
+        if groups[1]:
+            byte2 = int(groups[1])
+
+    length = size - byte1 if byte2 is None else byte2 - byte1 + 1
+    data = None
+    with open(media_path, 'rb') as f:
+        f.seek(byte1)
+        data = f.read(length)
+
+    rv = Response(data,
+                  206,
+                  mimetype="video/mp4",
+                  content_type="video/mp4",
+                  direct_passthrough=True)
+    rv.headers.add('Content-Range', f'bytes {byte1}-{byte1 + len(data) - 1}/{size}')
+    return rv
 
 
 @app.route("/start-over")
@@ -588,10 +590,19 @@ def shutdown_server():
 def run_flask(cfg):
     global CONFIG
     CONFIG = cfg
+    logger.info(f"Starting Flask-SocketIO server on port {CONFIG['port']}...")
+
+    # Add a delay to avoid race conditions
+    time.sleep(2)
+
     try:
-        logger.info("Starting Flask-SocketIO server...")
-        socketio.run(
-            app, host="0.0.0.0", port=CONFIG["port"], use_reloader=False, debug=False
+        # Use eventlet to run the Flask-SocketIO server with custom socket_timeout
+        import eventlet
+        eventlet.wsgi.server(
+            eventlet.listen(('0.0.0.0', CONFIG['port'])), 
+            app, 
+            log_output=True, 
+            socket_timeout=30  # Increase timeout to handle long connections
         )
         logger.info("Flask-SocketIO server started successfully.")
     except Exception as e:
@@ -599,59 +610,11 @@ def run_flask(cfg):
         shutdown()  # Signal shutdown on error
 
 
-def run_telethon_client(cfg):
-    global TELEGRAM_CLIENT
-    global telethon_event_loop
 
-    async def start_telegram_client():
-        global TELEGRAM_CLIENT
-        session_file = "user_session.session"  # Use a consistent session file name
-        TELEGRAM_CLIENT = TelegramClient(session_file, cfg["api_id"], cfg["api_hash"])
-        attempt = 0  # Counter for retry attempts
-
-        while not STOP_EVENT_LOOP:
-            try:
-                if not TELEGRAM_CLIENT.is_connected():
-                    await TELEGRAM_CLIENT.connect()
-
-                if not await TELEGRAM_CLIENT.is_user_authorized():
-                    await TELEGRAM_CLIENT.send_code_request(cfg["phone_number"])
-                    await TELEGRAM_CLIENT.sign_in(
-                        cfg["phone_number"], input("Enter the code: ")
-                    )
-                    TELEGRAM_CLIENT.session.save()  # Save session after signing in
-
-                setup_push_notifications(TELEGRAM_CLIENT)
-
-                # Main message processing loop
-                while not STOP_EVENT_LOOP:
-                    await get_latest_messages(TELEGRAM_CLIENT, cfg)
-                    delete_old_files(cfg["media_folder"])
-                    await asyncio.sleep(10)  # Throttle to avoid hitting rate limits
-            except Exception as e:
-                attempt += 1
-                logger.error(f"Error in Telethon client (Attempt {attempt}): {e}")
-
-                # Incremental backoff to avoid rapid retries
-                backoff = min(60, attempt * 5)
-                logger.info(f"Attempting to reconnect after {backoff} seconds...")
-                await asyncio.sleep(backoff)
-
-                if attempt > 10:  # Increase the number of reconnection attempts
-                    logger.error("Too many reconnection attempts. Stopping client.")
-                    shutdown()  # Gracefully shutdown after multiple failures
-                    break
-
-    # Create and share the event loop for the thread
-    telethon_event_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(telethon_event_loop)
-
-    # Signal that the loop is ready
-    loop_ready_event.set()
-
-    # Run everything within this loop
+async def run_telethon_client(cfg):
     try:
-        telethon_event_loop.run_until_complete(start_telegram_client())
+        # Telethon runs in its own event loop
+        await start_telegram_client()
     except Exception as e:
         logger.error(f"Critical error in Telethon event loop: {e}")
         shutdown()  # Signal shutdown on critical error
@@ -659,21 +622,62 @@ def run_telethon_client(cfg):
         # Ensure Telegram client disconnects properly
         if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected():
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    TELEGRAM_CLIENT.disconnect(), telethon_event_loop
-                )
-                future.result(timeout=5)
+                await TELEGRAM_CLIENT.disconnect()
                 logger.info("Telegram client disconnected.")
             except Exception as e:
                 logger.error(f"Error disconnecting Telethon client: {e}")
 
-        # Ensure all asyncio event loops are stopped
-        if telethon_event_loop and telethon_event_loop.is_running():
-            telethon_event_loop.call_soon_threadsafe(telethon_event_loop.stop)
-            telethon_event_loop.run_until_complete(
-                asyncio.sleep(0)
-            )  # Allow all tasks to complete
-            telethon_event_loop.close()
+
+async def start_telegram_client():
+    global TELEGRAM_CLIENT, telethon_event_loop
+
+    if not CONFIG:
+        logger.error("CONFIG is not set. Cannot start Telegram client.")
+        shutdown()
+        return
+
+    if not CONFIG.get("api_id") or not CONFIG.get("api_hash"):
+        logger.error("API ID or API Hash is missing from CONFIG.")
+        shutdown()
+        return
+
+    session_file = "user_session.session"
+    TELEGRAM_CLIENT = TelegramClient(session_file, CONFIG["api_id"], CONFIG["api_hash"])
+
+    try:
+        telethon_event_loop = asyncio.get_event_loop()
+
+        while not STOP_EVENT_LOOP:
+            try:
+                if not TELEGRAM_CLIENT.is_connected():
+                    await TELEGRAM_CLIENT.connect()
+
+                if not await TELEGRAM_CLIENT.is_user_authorized():
+                    await TELEGRAM_CLIENT.send_code_request(CONFIG["phone_number"])
+                    await TELEGRAM_CLIENT.sign_in(
+                        CONFIG["phone_number"], input("Enter the code: ")
+                    )
+                    TELEGRAM_CLIENT.session.save()
+
+                # Set up notifications and message processing
+                setup_push_notifications(TELEGRAM_CLIENT)
+
+                # Processing loop
+                while not STOP_EVENT_LOOP:
+                    await get_latest_messages(TELEGRAM_CLIENT, CONFIG)
+                    delete_old_files(CONFIG["media_folder"])
+                    await asyncio.sleep(10)
+
+            except Exception as e:
+                logger.error(f"Error in Telethon client: {e}")
+                await asyncio.sleep(10)
+
+    except Exception as e:
+        logger.error(f"Critical error in Telethon event loop: {e}")
+        shutdown()
+    finally:
+        if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected():
+            await TELEGRAM_CLIENT.disconnect()
 
 
 def shutdown_handler(signal_received, frame):
@@ -685,78 +689,50 @@ def shutdown():
     global STOP_EVENT_LOOP
     STOP_EVENT_LOOP = True  # Signal the event loop to stop
 
-    # Ensure Telegram client disconnects properly
-    if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected():
-        try:
-            if telethon_event_loop and telethon_event_loop.is_running():
-                # Schedule a coroutine to disconnect the Telegram client in the running loop
-                future = asyncio.run_coroutine_threadsafe(
-                    TELEGRAM_CLIENT.disconnect(), telethon_event_loop
-                )
-                future.result(timeout=5)
-                logger.info("Telegram client disconnected.")
-            else:
-                logger.warning(
-                    "Telethon event loop is not running. Skipping disconnect."
-                )
-        except Exception as e:
-            logger.error(f"Error disconnecting Telethon client: {e}")
-
-    # Shutdown Flask server by calling the shutdown route with the correct token
     try:
-        if CONFIG and CONFIG.get("port"):
-            shutdown_token = os.getenv("SHUTDOWN_TOKEN")
-            headers = {"X-Shutdown-Token": shutdown_token}
-            response = requests.post(
-                f'http://127.0.0.1:{CONFIG["port"]}/shutdown',
-                headers=headers,
-                timeout=5,
+        if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected() and telethon_event_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                TELEGRAM_CLIENT.disconnect(), telethon_event_loop
             )
-            if response.status_code == 200:
-                logger.info("Shutdown request sent to Flask server successfully.")
-            else:
-                logger.error(
-                    f"Failed to shutdown Flask server: {response.status_code} {response.text}"
-                )
-        else:
-            logger.error(
-                "CONFIG is not set or port is missing. Cannot shutdown Flask server."
-            )
+            future.result(timeout=5)  # Wait for client to disconnect
+            logger.info("Telegram client disconnected.")
     except Exception as e:
-        logger.error(f"Error shutting down Flask server: {e}")
-
-    logger.info("Shutting down the application...")
-
-    # Stop and close the event loop safely
-    if telethon_event_loop and telethon_event_loop.is_running():
-        try:
+        logger.error(f"Error disconnecting Telethon client: {e}")
+    finally:
+        # Stop the Telethon event loop
+        if telethon_event_loop and telethon_event_loop.is_running():
             telethon_event_loop.call_soon_threadsafe(telethon_event_loop.stop)
-            telethon_event_loop.run_until_complete(
-                asyncio.sleep(0)
-            )  # Allow all tasks to complete
             logger.info("Telethon event loop stopped.")
-        except Exception as e:
-            logger.error(f"Error stopping Telethon event loop: {e}")
 
-    if telethon_event_loop and not telethon_event_loop.is_closed():
-        try:
-            telethon_event_loop.close()
-            logger.info("Telethon event loop closed.")
-        except Exception as e:
-            logger.error(f"Error closing Telethon event loop: {e}")
+        # Stop Flask-SocketIO if running
+        if flask_thread:
+            shutdown_event.set()  # Signal Flask to shut down
+            socketio.stop()  # Stop the Flask server
+            flask_thread.join()  # Wait for Flask to finish
 
-    # Wait for Flask and Telethon threads to stop
-    if flask_thread:
-        flask_thread.join()
-    if telethon_thread:
-        telethon_thread.join()
 
-    # Signal the main thread to exit
-    shutdown_event.set()
+def run_telethon_thread(cfg):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    logger.info("Telethon event loop created.")
+
+    # Run the Telethon client and keep the loop alive
+    try:
+        loop.run_until_complete(run_telethon_client(cfg))
+        loop_ready_event.set()  # Ensure it's set when Telethon is ready
+        loop.run_forever()
+    except Exception as e:
+        logger.error(f"Error in Telethon loop: {e}")
+    finally:
+        loop.close()
+        logger.info("Telethon event loop closed.")
 
 
 def main(args):
+    global CONFIG
     cfg = load_config(args)
+    CONFIG = cfg
+    logger.info(f"Loaded CONFIG: {CONFIG}")
 
     if args.list_channels:
         asyncio.run(
@@ -765,6 +741,7 @@ def main(args):
             )
         )
         return
+
     global CHANNELS
     CHANNELS = load_channels(cfg["channel_list_file"])
 
@@ -772,25 +749,28 @@ def main(args):
     signal.signal(signal.SIGINT, shutdown_handler)
 
     global flask_thread, telethon_thread
-    # Start Telethon thread first to initialize the event loop
-    telethon_thread = threading.Thread(
-        target=lambda: asyncio.run(run_telethon_client(cfg)), daemon=True
-    )
-    telethon_thread.start()
 
-    # Wait until the Telethon event loop is ready
-    loop_ready_event.wait()
-
-    # Start Flask thread after Telethon is ready
+    # Start Flask thread first
+    logger.info("Starting Flask thread...")
     flask_thread = threading.Thread(target=run_flask, args=(cfg,), daemon=True)
     flask_thread.start()
 
+    # Ensure Flask has enough time to initialize before starting Telethon
+    time.sleep(2)  # Small delay for Flask initialization
+
+    # Start Telethon thread after Flask
+    logger.info("Starting Telethon thread...")
+    telethon_thread = threading.Thread(target=run_telethon_thread, args=(cfg,), daemon=True)
+    telethon_thread.start()
+
     try:
-        # Keep the main thread alive, allowing it to receive signals
         while not shutdown_event.is_set():
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Stopping the application...")
+        logger.info("Keyboard interrupt received. Stopping the application.")
+        shutdown()
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}")
         shutdown()
 
 
