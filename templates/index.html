@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ translations.get('lang_code', 'en') }}">
 <head>
     <meta charset="UTF-8">
-    <title>Telegram Message Ticker</title>
+    <title>{{ translations['title'] }}</title>
     <!-- 1. Include Socket.IO -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
     <!-- 2. Include jQuery -->
@@ -13,14 +13,14 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <h1>Telegram Message Ticker</h1>
+    <h1>{{ translations['title'] }}</h1>
     <div id="messages">
-        <h2 id="channel-name"></h2>
+        <h2 id="channel-name">{{ translations['channel'] }}</h2>
         <div id="message-text"></div>
         <div id="message-media"></div>
-        <div id="message-time"></div>
-        <div id="push-indicator" style="display:none; color: red;">הודעת פוש התקבלה!</div> <!-- Push message indicator -->
+        <div id="message-time">{{ translations['message_time'] }}</div>
+        <div id="push-indicator" style="display:none; color: red;">{{ translations['push_message'] }}</div> <!-- Push message indicator -->
     </div>
-    <button id="refreshFeed">Refresh Feed</button>
+    <button id="refreshFeed">{{ translations['refresh_feed'] }}</button>
 </body>
 </html>

@@ -1,0 +1,8 @@
+{
+    "lang_code": "en",
+    "title": "Telegram Message Ticker",
+    "channel": "Channel Name",
+    "message_time": "Sent at",
+    "refresh_feed": "Refresh Feed",
+    "push_message": "Push message received!"
+}

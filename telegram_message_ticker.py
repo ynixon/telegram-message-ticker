@@ -20,7 +20,8 @@ from flask import (
     url_for,
     send_from_directory,
     request,
-    Response
+    Response,
+    session
 )
 from flask_socketio import SocketIO, emit  # Import SocketIO
 from telethon import TelegramClient, events
@@ -69,6 +70,17 @@ channel_message_counters = {}  # Dictionary to hold per-channel message counts
 messages_lock = threading.Lock()
 
 
+def load_translations(language):
+    try:
+        with open(f'translations/{language}.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Fallback to default language (e.g., English)
+        with open('translations/en.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+
+
 def delete_old_files(media_dir):
     now = time.time()
     for filename in os.listdir(media_dir):
@@ -92,9 +104,11 @@ def load_config(args):
         "api_hash": os.getenv("TELEGRAM_API_HASH"),
         "port": os.getenv("PORT", "3005"),
         "media_folder": os.getenv("MEDIA_FOLDER", "media"),
-        "channel_list_file": os.getenv("CHANNEL_LIST_FILE", "channels.json"),
+        "channel_list_file": os.getenv("CHANNEL_LIST_FILE", "channels.json"),  # Ensure this line exists
         "phone_number": os.getenv("PHONE_NUMBER"),
         "message_age_limit": int(os.getenv("MESSAGE_AGE_LIMIT", "2")),
+        "default_language": os.getenv("DEFAULT_LANGUAGE", "en"),
+        "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here")
     }
 
     config_file = args.config_file if args.config_file else "config.json"
@@ -107,20 +121,6 @@ def load_config(args):
             logger.error("Failed to decode JSON from config file.")
             sys.exit(1)
 
-    # Override with command-line arguments if provided
-    if args.api_id:
-        cfg["api_id"] = args.api_id
-    if args.api_hash:
-        cfg["api_hash"] = args.api_hash
-    if args.port:
-        cfg["port"] = args.port
-    if args.media_folder:
-        cfg["media_folder"] = args.media_folder
-    if args.message_age_limit:
-        cfg["message_age_limit"] = args.message_age_limit
-
-    cfg["port"] = int(cfg["port"])
-
     # Check for missing required parameters
     missing_params = []
     if not cfg.get("api_id"):
@@ -129,12 +129,12 @@ def load_config(args):
         missing_params.append("API hash")
     if not cfg.get("phone_number"):
         missing_params.append("Phone number")
+    if not cfg.get("channel_list_file"):
+        missing_params.append("Channel list file")  # Ensure channel_list_file is checked
 
     if missing_params:
-        logger.error(
-            f"Missing required configuration: {', '.join(missing_params)}. "
-            f"Provide them via environment variables or config file."
-        )
+        logger.error(f"Missing required configuration: {', '.join(missing_params)}. "
+                     "Provide them via environment variables or config file.")
         sys.exit(1)
 
     return cfg
@@ -201,21 +201,21 @@ def setup_push_notifications(telegram_client):
 def extract_and_replace_urls(message_content):
     logger.debug(f"Original message content before URL extraction: {message_content}")
 
-    # Regular expression to find URLs
-    url_regex = re.compile(r'(https?://[^\s<>"\'\)]+)', re.UNICODE)
+    # Regular expression to find URLs (more precise to avoid nested href attributes)
+    url_regex = re.compile(r'(?<!href=["\'])https?://[^\s<>"\'\)]+', re.UNICODE)
 
     # Function to replace URLs with anchor tags
     def replace_url(match):
-        url = match.group(1)
+        url = match.group(0).strip()  # Strip any leading/trailing spaces
         title = fetch_url_title(url)
         # Return the proper anchor tag without nesting <a> tags inside href
         return f'<a href="{url}" target="_blank">{url}</a>'
 
-    # Replace URLs in the message content
+    # Replace URLs in the message content only if they're not already part of an <a> tag
     processed_content = url_regex.sub(replace_url, message_content)
 
+    # Log and return the processed content
     logger.debug(f"Processed message content after URL extraction: {processed_content}")
-
     return processed_content
 
 
@@ -448,11 +448,25 @@ def handle_aborted_connection(e):
 def test():
     return "Flask server is running"
 
+# Add a route to set the language
+@app.route('/set_language/<lang>', methods=['GET'])
+def set_language(lang):
+    if lang in ['en', 'he']:  # Add your supported languages here
+        session['language'] = lang
+        return redirect(url_for('display'))
+    return "Invalid language", 400
+
 
 @app.route("/")
 def display():
-    logger.debug("Rendering index.html with initial parameters.")
-    return render_template("index.html", messages=[], refresh_flag=REFRESH_FLAG)
+    # Get the selected language from the config (e.g., 'en' from config.json)
+    language = CONFIG.get('default_language', 'en')
+    translations = load_translations(language)  # Load the appropriate translation file
+    
+    # Pass the translations and refresh flag to the template
+    return render_template("index.html", translations=translations, refresh_flag=REFRESH_FLAG)
+
+
 
 
 @app.route("/fetch-title", methods=["GET"])
@@ -586,29 +600,43 @@ def shutdown_server():
         logger.error(f"Error during shutdown: {e}")
     return "Server shutting down..."
 
+def trigger_client_refresh():
+    try:
+        # Emit a 'refresh' event to all connected clients
+        socketio.emit('refresh', {'message': 'Refresh the data'})
+        logger.info("Refresh event triggered for clients.")
+    except Exception as e:
+        logger.error(f"Error triggering refresh event: {e}")
 
+@app.route('/trigger-client-refresh', methods=['POST'])
+def trigger_refresh():
+    try:
+        trigger_client_refresh()
+        return jsonify({"status": "Refresh event triggered"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Set up Flask app with secret key
 def run_flask(cfg):
     global CONFIG
     CONFIG = cfg
-    logger.info(f"Starting Flask-SocketIO server on port {CONFIG['port']}...")
 
-    # Add a delay to avoid race conditions
+    app.secret_key = CONFIG.get("secret_key")  # Set the secret key from config
+
+    logger.info(f"Starting Flask-SocketIO server on port {CONFIG['port']}...")
     time.sleep(2)
 
     try:
-        # Use eventlet to run the Flask-SocketIO server with custom socket_timeout
-        import eventlet
         eventlet.wsgi.server(
             eventlet.listen(('0.0.0.0', CONFIG['port'])), 
-            app, 
+            app,
             log_output=True, 
-            socket_timeout=30  # Increase timeout to handle long connections
+            socket_timeout=30
         )
-        logger.info("Flask-SocketIO server started successfully.")
     except Exception as e:
         logger.error(f"Error running Flask server: {e}")
         shutdown()  # Signal shutdown on error
-
 
 
 async def run_telethon_client(cfg):

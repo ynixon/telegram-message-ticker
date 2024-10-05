@@ -56,6 +56,12 @@ $(document).ready(function () {
         }
     });
 
+    // Listen for refresh events and reload the page when triggered
+    socket.on('refresh', function (data) {
+        console.log("Received refresh event from server:", data);
+        location.reload();  // Reload the page on refresh event
+    });
+
     // Handle connection loss
     socket.on('disconnect', function () {
         console.warn('Lost connection to the server.');

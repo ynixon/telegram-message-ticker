@@ -125,3 +125,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contributing
 
 Contributions are welcome! If you have suggestions for improvements or find bugs, please open an issue or submit a pull request.
+
+curl  -X POST http://localhost:3005/trigger-client-refresh
