@@ -42,6 +42,10 @@ $(document).ready(function () {
         console.debug("isDisplaying before showing the next message:", isDisplaying);
 
         if (!isDisplaying && isConnected) {
+            // Hide loading message and show the main messages container
+            $("#loading-message").hide();
+            $("#messages").show();
+
             showMessage();  
         }
     }
@@ -65,7 +69,7 @@ $(document).ready(function () {
     // Handle connection loss
     socket.on('disconnect', function () {
         console.warn('Lost connection to the server.');
-        $("#push-indicator").text('החיבור לשרת אבד. מנסה להתחבר מחדש...').show();  // Show lost connection message
+        $("#push-indicator").text(translations['push_message']).show();
         isConnected = false;  // Set connection flag to false
         stopMessageDisplay();  // Stop displaying messages until reconnected
     });
@@ -218,10 +222,11 @@ $(document).ready(function () {
                 $("#message-time").removeClass("recent-message").addClass("old-message");
             }
     
-            $("#message-time").text("נשלח ב: " + messageTime);
+            $("#message-time").text(`${translations['message_time']}: ${messageTime}`);
+
     
             if (messageData.is_push) {
-                $("#push-indicator").text("הודעת פוש התקבלה!").show();
+                $("#push-indicator").text(translations['push_message']).show();
             } else {
                 $("#push-indicator").hide();
             }
@@ -252,4 +257,8 @@ $(document).ready(function () {
     $("#refreshFeed").on('click', function () {
         location.reload();
     });
+
+    function changeLanguage(lang) {
+        window.location.href = `/set_language/${lang}`;
+    }    
 });

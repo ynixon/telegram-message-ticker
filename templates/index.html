@@ -11,10 +11,28 @@
     <script src="{{ url_for('static', filename='ticker.js') }}"></script>
     <!-- 4. Include Your CSS (if any) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+    <!-- Embed the translations object -->
+    <script type="text/javascript">
+        var translations = {{ translations | tojson }};
+
+        // Define the changeLanguage function before it's used
+        function changeLanguage(lang) {
+            window.location.href = `/set_language/${lang}`;
+        }
+    </script>
 </head>
 <body>
     <h1>{{ translations['title'] }}</h1>
-    <div id="messages">
+    <select id="language-selector" onchange="changeLanguage(this.value)">
+        <option value="en" {{ 'selected' if translations['lang_code'] == 'en' else '' }}>English</option>
+        <option value="he" {{ 'selected' if translations['lang_code'] == 'he' else '' }}>עברית</option>
+    </select>
+
+    <!-- Loading message to display before the first message is loaded -->
+    <div id="loading-message" class="loading-text">{{ translations['loading_message'] }}</div>
+    
+    <div id="messages" style="display:none;"> <!-- Hide messages initially -->
         <h2 id="channel-name">{{ translations['channel'] }}</h2>
         <div id="message-text"></div>
         <div id="message-media"></div>

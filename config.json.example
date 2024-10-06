@@ -4,5 +4,8 @@
   "port": 3005,
   "media_folder": "media",
   "channel_list_file": "channels.json",
-  "message_age_limit": 2
+  "message_age_limit": 2,
+  "default_language": "en",
+  "secret_key": "<Your_Secret_Key>",
+  "channel_list_file": "channels.json"
 }

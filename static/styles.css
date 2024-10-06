@@ -153,3 +153,38 @@ body {
     text-align: center;
     margin: 20px;
 }
+
+/* Language selector styles */
+#language-selector {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background-color: #1e1e1e;
+    color: white;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 5px;
+    font-size: 16px;
+    outline: none;
+    cursor: pointer;
+    z-index: 1000; /* Ensure it appears above other elements */
+}
+
+#language-selector option {
+    background-color: #1e1e1e;
+    color: white;
+}
+
+/* Loading Screen Styles */
+.loading-text {
+    font-size: 50px;        /* Adjust size to your preference */
+    color: #888888;         /* Grey color */
+    font-weight: bold;
+    display: flex;
+    justify-content: center; /* Horizontally center */
+    align-items: center;     /* Vertically center */
+    height: 100vh;           /* Full viewport height */
+    text-align: center;
+    margin: 0;               /* Remove any default margins */
+    direction: rtl;
+}

@@ -214,8 +214,17 @@ def extract_and_replace_urls(message_content):
     # Replace URLs in the message content only if they're not already part of an <a> tag
     processed_content = url_regex.sub(replace_url, message_content)
 
+    # Convert the processed content into a BeautifulSoup object for link removal
+    soup = BeautifulSoup(processed_content, "html.parser")
+    
+    # Remove duplicate links
+    remove_duplicate_links(soup)
+
+    # Convert back to a string for further use
+    processed_content = str(soup)
+
     # Log and return the processed content
-    logger.debug(f"Processed message content after URL extraction: {processed_content}")
+    logger.debug(f"Processed message content after URL extraction and link removal: {processed_content}")
     return processed_content
 
 
@@ -253,6 +262,14 @@ def fetch_url_title(url):
         title = url  # Use the URL as the title in case of error
     return title
 
+def remove_duplicate_links(soup):
+    seen_links = set()
+    for a_tag in soup.find_all("a"):
+        href = a_tag.get("href")
+        if href in seen_links:
+            a_tag.decompose()  # Remove the duplicate link
+        else:
+            seen_links.add(href)
 
 def broadcast_new_message(message_data, is_push=False):
     # Ensure 'time' is a string
@@ -452,15 +469,19 @@ def test():
 @app.route('/set_language/<lang>', methods=['GET'])
 def set_language(lang):
     if lang in ['en', 'he']:  # Add your supported languages here
-        session['language'] = lang
-        return redirect(url_for('display'))
-    return "Invalid language", 400
+        session['language'] = lang  # Store language in the session
+        logger.info(f"Language set to {lang}")
+    else:
+        logger.warning(f"Unsupported language: {lang}")
+    return redirect(url_for('display'))  # Redirect to refresh the page with new language
 
 
 @app.route("/")
 def display():
-    # Get the selected language from the config (e.g., 'en' from config.json)
-    language = CONFIG.get('default_language', 'en')
+    # Get the selected language from the session or fallback to default language in the config
+    language = session.get('language', CONFIG.get('default_language', 'en'))
+    
+    logger.info(f"Using language: {language}")
     translations = load_translations(language)  # Load the appropriate translation file
     
     # Pass the translations and refresh flag to the template

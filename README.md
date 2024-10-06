@@ -5,10 +5,11 @@ This project is a web application that fetches the latest messages from specifie
 ## Features
 
 - Fetches and displays messages from Telegram channels.
-- Supports displaying text and photo messages.
+- Supports displaying text, photos, and videos.
 - Automatically updates the ticker every few seconds.
-- Allows manual refresh of the message feed.
+- Allows manual or remote refresh of the message feed.
 - Deletes old media files after a specified period.
+- **Language support** for switching between different languages dynamically.
 
 ## Prerequisites
 
@@ -45,7 +46,8 @@ This project is a web application that fetches the latest messages from specifie
      "port": 3005,
      "media_folder": "media",
      "channel_list_file": "channels.json",
-     "message_age_limit": 2
+     "message_age_limit": 2,
+     "default_language": "en"
    }
    ```
 
@@ -87,6 +89,7 @@ You can run the application with various options:
    - `MEDIA_FOLDER`: Directory for storing downloaded media files (default is "media").
    - `CHANNEL_LIST_FILE`: Path to the JSON file containing channels (default is "channels.json").
    - `MESSAGE_AGE_LIMIT`: Maximum age of messages in hours (default is 2).
+   - `DEFAULT_LANGUAGE`: The default language for the interface (e.g., "en" or "he").
 
 2. **Command-Line Arguments:**
    You can also provide arguments while running the script:
@@ -100,11 +103,48 @@ You can run the application with various options:
 3. **Using Configuration File:**
    If you have created the `config.json` file as described in the setup instructions, it will automatically be loaded when running the application without additional arguments.
 
+## Remote Refresh URL
+
+You can remotely trigger a refresh of the message ticker by sending a `POST` request to the following endpoint:
+
+```
+POST /trigger-client-refresh
+```
+
+This will send a refresh event to all connected clients, prompting them to reload the message feed without manually interacting with the page.
+
+Example using `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:3005/trigger-client-refresh
+```
+
+## Language Support
+
+The application supports dynamic language switching. Users can switch between available languages using the dropdown list on the page.
+
+- Supported languages (e.g., English and Hebrew) are handled via the `/set_language/<lang>` route.
+- To switch between languages programmatically, you can navigate to:
+
+```
+/set_language/en   # For English
+/set_language/he   # For Hebrew
+```
+
+Upon changing the language, the page will automatically refresh to reflect the selected language.
+
+Example usage for language change:
+
+```bash
+curl http://127.0.0.1:3005/set_language/he
+```
+
 ## Usage
 
 - Open your web browser and navigate to `http://127.0.0.1:3005`.
 - The latest messages from the configured Telegram channels will be displayed in a ticker format.
-- Use the **Refresh Feed** button to manually refresh the messages.
+- Use the **Refresh Feed** button or the remote refresh URL to manually refresh the messages.
+- Change the language using the dropdown or by calling the appropriate route to update the UI language.
 
 ## File Structure
 
@@ -125,5 +165,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contributing
 
 Contributions are welcome! If you have suggestions for improvements or find bugs, please open an issue or submit a pull request.
-
-curl  -X POST http://localhost:3005/trigger-client-refresh
