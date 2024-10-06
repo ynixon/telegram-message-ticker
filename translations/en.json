@@ -4,5 +4,6 @@
     "channel": "Channel Name",
     "message_time": "Sent at",
     "refresh_feed": "Refresh Feed",
-    "push_message": "Push message received!"
+    "push_message": "Push message received!",
+    "lost_connection": "Lost connection to the server"
 }

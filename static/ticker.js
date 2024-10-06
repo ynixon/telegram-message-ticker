@@ -69,7 +69,7 @@ $(document).ready(function () {
     // Handle connection loss
     socket.on('disconnect', function () {
         console.warn('Lost connection to the server.');
-        $("#push-indicator").text(translations['push_message']).show();
+        $("#push-indicator").text(translations['lost_connection']).show();
         isConnected = false;  // Set connection flag to false
         stopMessageDisplay();  // Stop displaying messages until reconnected
     });
