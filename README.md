@@ -47,11 +47,21 @@ This project is a web application that fetches the latest messages from specifie
      "media_folder": "media",
      "channel_list_file": "channels.json",
      "message_age_limit": 2,
-     "default_language": "en"
+     "default_language": "en",
+     "secret_key": "<Your_Secret_Key>"
    }
    ```
 
-   Replace `<Your_Telegram_API_ID>` and `<Your_Telegram_API_Hash>` with your actual Telegram API credentials. The `message_age_limit` specifies the maximum age of messages to fetch, in hours.
+   - Replace `<Your_Telegram_API_ID>` and `<Your_Telegram_API_Hash>` with your actual Telegram API credentials.
+   - Set the `message_age_limit` to specify the maximum age of messages to fetch, in hours.
+   - The `secret_key` is a crucial component for Flask, which is used for securely signing the session cookie. It should be a long, random string. You can generate one using Python:
+
+     ```python
+     import os
+     print(os.urandom(24).hex())
+     ```
+
+     Use the output as the value for `secret_key` in the `config.json`.
 
 4. **Create a channels JSON file:**
 
@@ -90,6 +100,7 @@ You can run the application with various options:
    - `CHANNEL_LIST_FILE`: Path to the JSON file containing channels (default is "channels.json").
    - `MESSAGE_AGE_LIMIT`: Maximum age of messages in hours (default is 2).
    - `DEFAULT_LANGUAGE`: The default language for the interface (e.g., "en" or "he").
+   - `SECRET_KEY`: The key used for securely signing the Flask session cookies.
 
 2. **Command-Line Arguments:**
    You can also provide arguments while running the script:

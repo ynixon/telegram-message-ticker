@@ -21,7 +21,7 @@ from flask import (
     send_from_directory,
     request,
     Response,
-    session
+    session,
 )
 from flask_socketio import SocketIO, emit  # Import SocketIO
 from telethon import TelegramClient, events
@@ -72,13 +72,12 @@ messages_lock = threading.Lock()
 
 def load_translations(language):
     try:
-        with open(f'translations/{language}.json', 'r', encoding='utf-8') as f:
+        with open(f"translations/{language}.json", "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         # Fallback to default language (e.g., English)
-        with open('translations/en.json', 'r', encoding='utf-8') as f:
+        with open("translations/en.json", "r", encoding="utf-8") as f:
             return json.load(f)
-
 
 
 def delete_old_files(media_dir):
@@ -104,11 +103,13 @@ def load_config(args):
         "api_hash": os.getenv("TELEGRAM_API_HASH"),
         "port": os.getenv("PORT", "3005"),
         "media_folder": os.getenv("MEDIA_FOLDER", "media"),
-        "channel_list_file": os.getenv("CHANNEL_LIST_FILE", "channels.json"),  # Ensure this line exists
+        "channel_list_file": os.getenv(
+            "CHANNEL_LIST_FILE", "channels.json"
+        ),  # Ensure this line exists
         "phone_number": os.getenv("PHONE_NUMBER"),
         "message_age_limit": int(os.getenv("MESSAGE_AGE_LIMIT", "2")),
         "default_language": os.getenv("DEFAULT_LANGUAGE", "en"),
-        "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here")
+        "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here"),
     }
 
     config_file = args.config_file if args.config_file else "config.json"
@@ -130,11 +131,15 @@ def load_config(args):
     if not cfg.get("phone_number"):
         missing_params.append("Phone number")
     if not cfg.get("channel_list_file"):
-        missing_params.append("Channel list file")  # Ensure channel_list_file is checked
+        missing_params.append(
+            "Channel list file"
+        )  # Ensure channel_list_file is checked
 
     if missing_params:
-        logger.error(f"Missing required configuration: {', '.join(missing_params)}. "
-                     "Provide them via environment variables or config file.")
+        logger.error(
+            f"Missing required configuration: {', '.join(missing_params)}. "
+            "Provide them via environment variables or config file."
+        )
         sys.exit(1)
 
     return cfg
@@ -216,7 +221,7 @@ def extract_and_replace_urls(message_content):
 
     # Convert the processed content into a BeautifulSoup object for link removal
     soup = BeautifulSoup(processed_content, "html.parser")
-    
+
     # Remove duplicate links
     remove_duplicate_links(soup)
 
@@ -224,7 +229,9 @@ def extract_and_replace_urls(message_content):
     processed_content = str(soup)
 
     # Log and return the processed content
-    logger.debug(f"Processed message content after URL extraction and link removal: {processed_content}")
+    logger.debug(
+        f"Processed message content after URL extraction and link removal: {processed_content}"
+    )
     return processed_content
 
 
@@ -262,6 +269,7 @@ def fetch_url_title(url):
         title = url  # Use the URL as the title in case of error
     return title
 
+
 def remove_duplicate_links(soup):
     seen_links = set()
     for a_tag in soup.find_all("a"):
@@ -270,6 +278,7 @@ def remove_duplicate_links(soup):
             a_tag.decompose()  # Remove the duplicate link
         else:
             seen_links.add(href)
+
 
 def broadcast_new_message(message_data, is_push=False):
     # Ensure 'time' is a string
@@ -455,6 +464,7 @@ async def get_latest_messages(telegram_client, cfg):
     logger.info(f"Total messages fetched: {total_messages_fetched}")
     logger.info(f"Total messages processed: {total_messages_processed}")
 
+
 @app.errorhandler(ConnectionAbortedError)
 def handle_aborted_connection(e):
     logger.warning(f"Connection aborted: {e}")
@@ -465,29 +475,32 @@ def handle_aborted_connection(e):
 def test():
     return "Flask server is running"
 
+
 # Add a route to set the language
-@app.route('/set_language/<lang>', methods=['GET'])
+@app.route("/set_language/<lang>", methods=["GET"])
 def set_language(lang):
-    if lang in ['en', 'he']:  # Add your supported languages here
-        session['language'] = lang  # Store language in the session
+    if lang in ["en", "he"]:  # Add your supported languages here
+        session["language"] = lang  # Store language in the session
         logger.info(f"Language set to {lang}")
     else:
         logger.warning(f"Unsupported language: {lang}")
-    return redirect(url_for('display'))  # Redirect to refresh the page with new language
+    return redirect(
+        url_for("display")
+    )  # Redirect to refresh the page with new language
 
 
 @app.route("/")
 def display():
     # Get the selected language from the session or fallback to default language in the config
-    language = session.get('language', CONFIG.get('default_language', 'en'))
-    
+    language = session.get("language", CONFIG.get("default_language", "en"))
+
     logger.info(f"Using language: {language}")
     translations = load_translations(language)  # Load the appropriate translation file
-    
+
     # Pass the translations and refresh flag to the template
-    return render_template("index.html", translations=translations, refresh_flag=REFRESH_FLAG)
-
-
+    return render_template(
+        "index.html", translations=translations, refresh_flag=REFRESH_FLAG
+    )
 
 
 @app.route("/fetch-title", methods=["GET"])
@@ -536,13 +549,13 @@ def handle_disconnect():
 @app.route("/media/<path:filename>")
 def media(filename):
     media_path = os.path.join(CONFIG["media_folder"], filename)
-    range_header = request.headers.get('Range', None)
+    range_header = request.headers.get("Range", None)
     if not range_header:
         return send_from_directory(CONFIG["media_folder"], filename)
 
     size = os.path.getsize(media_path)
     byte1, byte2 = 0, None
-    match = re.search(r'(\d+)-(\d*)', range_header)
+    match = re.search(r"(\d+)-(\d*)", range_header)
     if match:
         groups = match.groups()
         byte1 = int(groups[0])
@@ -551,16 +564,18 @@ def media(filename):
 
     length = size - byte1 if byte2 is None else byte2 - byte1 + 1
     data = None
-    with open(media_path, 'rb') as f:
+    with open(media_path, "rb") as f:
         f.seek(byte1)
         data = f.read(length)
 
-    rv = Response(data,
-                  206,
-                  mimetype="video/mp4",
-                  content_type="video/mp4",
-                  direct_passthrough=True)
-    rv.headers.add('Content-Range', f'bytes {byte1}-{byte1 + len(data) - 1}/{size}')
+    rv = Response(
+        data,
+        206,
+        mimetype="video/mp4",
+        content_type="video/mp4",
+        direct_passthrough=True,
+    )
+    rv.headers.add("Content-Range", f"bytes {byte1}-{byte1 + len(data) - 1}/{size}")
     return rv
 
 
@@ -621,15 +636,17 @@ def shutdown_server():
         logger.error(f"Error during shutdown: {e}")
     return "Server shutting down..."
 
+
 def trigger_client_refresh():
     try:
         # Emit a 'refresh' event to all connected clients
-        socketio.emit('refresh', {'message': 'Refresh the data'})
+        socketio.emit("refresh", {"message": "Refresh the data"})
         logger.info("Refresh event triggered for clients.")
     except Exception as e:
         logger.error(f"Error triggering refresh event: {e}")
 
-@app.route('/trigger-client-refresh', methods=['POST'])
+
+@app.route("/trigger-client-refresh", methods=["POST"])
 def trigger_refresh():
     try:
         trigger_client_refresh()
@@ -650,10 +667,10 @@ def run_flask(cfg):
 
     try:
         eventlet.wsgi.server(
-            eventlet.listen(('0.0.0.0', CONFIG['port'])), 
+            eventlet.listen(("0.0.0.0", CONFIG["port"])),
             app,
-            log_output=True, 
-            socket_timeout=30
+            log_output=True,
+            socket_timeout=30,
         )
     except Exception as e:
         logger.error(f"Error running Flask server: {e}")
@@ -739,7 +756,11 @@ def shutdown():
     STOP_EVENT_LOOP = True  # Signal the event loop to stop
 
     try:
-        if TELEGRAM_CLIENT and TELEGRAM_CLIENT.is_connected() and telethon_event_loop.is_running():
+        if (
+            TELEGRAM_CLIENT
+            and TELEGRAM_CLIENT.is_connected()
+            and telethon_event_loop.is_running()
+        ):
             future = asyncio.run_coroutine_threadsafe(
                 TELEGRAM_CLIENT.disconnect(), telethon_event_loop
             )
@@ -809,7 +830,9 @@ def main(args):
 
     # Start Telethon thread after Flask
     logger.info("Starting Telethon thread...")
-    telethon_thread = threading.Thread(target=run_telethon_thread, args=(cfg,), daemon=True)
+    telethon_thread = threading.Thread(
+        target=run_telethon_thread, args=(cfg,), daemon=True
+    )
     telethon_thread.start()
 
     try:
