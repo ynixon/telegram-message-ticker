@@ -47,7 +47,7 @@ app.config["JSON_AS_ASCII"] = False
 
 # Initialize logging with timestamps
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -103,44 +103,35 @@ def load_config(args):
         "api_hash": os.getenv("TELEGRAM_API_HASH"),
         "port": os.getenv("PORT", "3005"),
         "media_folder": os.getenv("MEDIA_FOLDER", "media"),
-        "channel_list_file": os.getenv(
-            "CHANNEL_LIST_FILE", "channels.json"
-        ),  # Ensure this line exists
+        "channel_list_file": os.getenv("CHANNEL_LIST_FILE", "channels.json"),
         "phone_number": os.getenv("PHONE_NUMBER"),
         "message_age_limit": int(os.getenv("MESSAGE_AGE_LIMIT", "2")),
         "default_language": os.getenv("DEFAULT_LANGUAGE", "en"),
         "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here"),
     }
 
-    config_file = args.config_file if args.config_file else "config.json"
-    if os.path.exists(config_file):
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                file_config = json.load(f)
-                cfg.update(file_config)
-        except json.JSONDecodeError:
-            logger.error("Failed to decode JSON from config file.")
-            sys.exit(1)
+    # Automatically build the path to the config.json file relative to the script's location
+    current_dir = os.path.dirname(os.path.realpath(__file__))
+    config_file = os.path.join(current_dir, "config.json")
+    print(f"Loading config file from: {config_file}")
 
-    # Check for missing required parameters
-    missing_params = []
-    if not cfg.get("api_id"):
-        missing_params.append("API ID")
-    if not cfg.get("api_hash"):
-        missing_params.append("API hash")
-    if not cfg.get("phone_number"):
-        missing_params.append("Phone number")
-    if not cfg.get("channel_list_file"):
-        missing_params.append(
-            "Channel list file"
-        )  # Ensure channel_list_file is checked
-
-    if missing_params:
-        logger.error(
-            f"Missing required configuration: {', '.join(missing_params)}. "
-            "Provide them via environment variables or config file."
-        )
+    if not os.path.exists(config_file):
+        logger.error("Missing required configuration: API ID, API hash, Phone number. Provide them via environment variables or config file.")
         sys.exit(1)
+
+    # Load the configuration file if it exists
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            file_config = json.load(f)
+            logger.debug(f"Config file before merge: {file_config}")
+            print(f"Loaded config file contents: {file_config}")  # Debug print
+            cfg.update(file_config)
+            logger.debug(f"Config after merge: {cfg}")
+    except json.JSONDecodeError:
+        logger.error("Failed to decode JSON from config file.")
+        sys.exit(1)
+
+    logger.debug(f"Final CONFIG after merge: {cfg}")
 
     return cfg
 
@@ -155,6 +146,14 @@ async def list_all_channels(telegram_client):
 
 
 def load_channels(channel_list_file):
+    # Search for channels.json in the provided path, then in application directory if not found
+    if not os.path.exists(channel_list_file):
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        channel_list_file = os.path.join(current_dir, "channels.json")
+        if not os.path.exists(channel_list_file):
+            logger.error(f"Missing channels list file: {channel_list_file}")
+            sys.exit(1)
+
     try:
         with open(channel_list_file, "r", encoding="utf-8") as f:
             channels = json.load(f)["channels"]
@@ -214,7 +213,7 @@ def extract_and_replace_urls(message_content):
         url = match.group(0).strip()  # Strip any leading/trailing spaces
         title = fetch_url_title(url)
         # Return the proper anchor tag without nesting <a> tags inside href
-        return f'<a href="{url}" target="_blank">{url}</a>'
+        return f'<a href="{url}" target="_blank">{title}</a>'
 
     # Replace URLs in the message content only if they're not already part of an <a> tag
     processed_content = url_regex.sub(replace_url, message_content)
@@ -707,7 +706,17 @@ async def start_telegram_client():
         shutdown()
         return
 
+    # Determine session file path, prioritize current directory first
     session_file = "user_session.session"
+    
+    # Check in current directory (C:\temp)
+    if not os.path.exists(session_file):
+        logger.info(f"Session file not found in current directory, checking application directory...")
+        
+        # Then check in application directory (C:\workarea\Private\telegram-message-ticker)
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        session_file = os.path.join(current_dir, "user_session.session")
+    
     TELEGRAM_CLIENT = TelegramClient(session_file, CONFIG["api_id"], CONFIG["api_hash"])
 
     try:
