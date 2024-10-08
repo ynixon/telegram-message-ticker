@@ -1,7 +1,8 @@
 $(document).ready(function () {
+    // Corrected variable name for consistency
+    var message_age_limit_in_hours = 2; // in hours
     console.log("Message age limit set to:", message_age_limit_in_hours, "hours");
 
-    
     // Socket.IO configuration with reconnection settings
     var socket = io({
         reconnection: true,             // Ensure reconnection is enabled
@@ -18,11 +19,12 @@ $(document).ready(function () {
     var isDisplaying = false;
     var totalMessagesReceived = 0;
     var isConnected = true;  // Flag to track connection state
-    var hasInitialMessagesLoaded = false; // New flag to prevent re-processing
+    var hasInitialMessagesLoaded = false; // Flag to prevent re-processing
 
     // Set message_age_limit to 2 hours to match the server configuration
-    var message_age_limit = 2; // in hours
+    var message_age_limit = message_age_limit_in_hours; // in hours
 
+    // Function to remove old messages
     function removeOldMessages() {
         const currentTime = new Date();
 
@@ -37,6 +39,7 @@ $(document).ready(function () {
         console.log("Messages after removing old ones:", messages);
     }
 
+    // Function to add new messages
     function addMessages(newMessages) {
         if (!newMessages || !Array.isArray(newMessages)) {
             console.error("Invalid data format for messages:", newMessages);
@@ -123,6 +126,7 @@ $(document).ready(function () {
         location.reload();  // Reload the page on refresh event
     });
 
+    // Handle disconnection
     socket.on('disconnect', function() {
         console.warn('Lost connection to the server.');
         
@@ -134,11 +138,12 @@ $(document).ready(function () {
     
         isConnected = false;
     
-        // Log and attempt to reconnect
+        // Log and attempt to reconnect (remove custom reconnection logic if using built-in)
         console.log("Attempting to reconnect...");
-        attemptReconnection();
+        // If using built-in reconnection, no need to call attemptReconnection
+        // If you opted for custom reconnection, ensure the following is appropriate
+        // attemptReconnection(); // Remove if using built-in
     });
-    
 
     // Handle reconnection attempts
     socket.on('reconnect_attempt', function (attempt) {
@@ -166,35 +171,11 @@ $(document).ready(function () {
     // Handle reconnection failure after max attempts
     socket.on('reconnect_failed', function () {
         console.error('Failed to reconnect to the server.');
-        $("#push-indicator").text('לא ניתן להתחבר לשרת. אנא נסה שוב מאוחר יותר.').show();  // Show permanent lost connection message
+	$("#lost-connection").text(translations['lost_connection']).show();
         isConnected = false;  // Ensure the flag remains false if reconnection fails
     });
 
-    // Reconnection logic with exponential backoff
-    var reconnectAttempts = 0;
-    var maxReconnectAttempts = 10;
-
-    function attemptReconnection() {
-        if (reconnectAttempts >= maxReconnectAttempts) {
-            console.error('Maximum reconnection attempts reached. Stopping further attempts.');
-            $("#push-indicator").text('לא ניתן להתחבר לשרת. אנא נסה שוב מאוחר יותר.').show();
-            return;
-        }
-
-        var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 5000); // Exponential backoff up to 5 seconds
-        console.log(`Attempting to reconnect in ${delay / 1000} seconds...`);
-
-        setTimeout(function() {
-            console.log('Attempting to reconnect...');
-            socket.connect();
-
-            // Show the 'lost connection' message
-            $("#lost-connection").text(translations['lost_connection']).show();
-        }, delay);
-
-        reconnectAttempts++;
-    }
-
+    // Function to display push messages
     function showPushMessage(messageData) {
         $("#push-indicator").text(translations['push_message']).show();
         
@@ -213,21 +194,19 @@ $(document).ready(function () {
             console.warn("Initial messages already processed. Skipping...");
         }
     });
+
     // Handle incoming new messages
     socket.on('new_message', function (data) {
         console.debug("Received new message:", data);
         addMessages([data]);  
     });
 
+    // Handle total processed messages (optional)
     socket.on('total_processed', function (data) {
         console.log('Total messages processed by server:', data.count);
     });
 
-    // Handle incoming push messages within 'new_message' events
-    // Removed the separate 'push_message' event listener
-    // All push messages are handled within the 'new_message' event
-
-    // Stop displaying messages when disconnected
+    // Function to stop displaying messages when disconnected
     function stopMessageDisplay() {
         clearTimeout(timeoutId);
         clearTimeout(backupTimeoutId);
@@ -278,7 +257,7 @@ $(document).ready(function () {
         return cleanedMessage;
     }
 
-    // Function to display a message from the sorted messages list
+    // **Consolidated `showMessage` Function**
     function showMessage() {
         if (!isConnected) {
             console.warn("Cannot display messages while disconnected.");
@@ -291,14 +270,15 @@ $(document).ready(function () {
             return;
         }
 
-        // Always display the latest message first
+        // Reset currentIndex if it exceeds the number of messages
+        if (currentIndex >= messages.length) {
+            currentIndex = 0;
+            console.debug("All messages have been displayed. Restarting loop.");
+        }
+
         var messageData = messages[currentIndex];
 
-        // Check if the message has already been displayed
-        if (messageData && !messageData.displayed) {
-            // Mark the message as displayed
-            messageData.displayed = true;
-
+        if (messageData) {
             console.debug("Showing message: ", messageData);
 
             var channelName = messageData.channel;
@@ -333,7 +313,7 @@ $(document).ready(function () {
             $("#channel-name").text(channelName);
             $("#message-text").html(message);
 
-            if (timeDifference <= 2) {  // Adjusted to 2 hours
+            if (timeDifference <= message_age_limit) { // Use the correct variable
                 $("#message-time").removeClass("old-message").addClass("recent-message");
             } else {
                 $("#message-time").removeClass("recent-message").addClass("old-message");
@@ -347,7 +327,7 @@ $(document).ready(function () {
                 $("#push-indicator").hide();
             }
 
-            currentIndex = (currentIndex + 1) % messages.length; // Loop through messages
+            currentIndex = (currentIndex + 1) % messages.length;  // Loop through messages continuously
 
             isDisplaying = true;
 
@@ -370,368 +350,20 @@ $(document).ready(function () {
                 }
             }, 15000); // 15 seconds backup timeout
         } else {
-            console.warn("All messages have been displayed or invalid message.");
+            console.warn("Invalid message or all messages displayed.");
             isDisplaying = false;
+            // Optional: Restart the loop immediately
+            showMessage();
         }
     }
 
+    // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
         location.reload();
     });
 
     function changeLanguage(lang) {
         window.location.href = `/set_language/${lang}`;
-    }
-
-    // Reconnection logic with exponential backoff
-    var reconnectAttempts = 0;
-    var maxReconnectAttempts = 10;
-
-    function attemptReconnection() {
-        if (reconnectAttempts >= maxReconnectAttempts) {
-            console.error('Maximum reconnection attempts reached. Stopping further attempts.');
-            $("#push-indicator").text('לא ניתן להתחבר לשרת. אנא נסה שוב מאוחר יותר.').show();
-            return;
-        }
-
-        var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 5000); // Exponential backoff up to 5 seconds
-        console.log(`Attempting to reconnect in ${delay / 1000} seconds...`);
-
-        setTimeout(function() {
-            console.log('Attempting to reconnect...');
-            socket.connect();
-
-            // Show the 'lost connection' message
-            $("#lost-connection").text(translations['lost_connection']).show();
-        }, delay);
-
-        reconnectAttempts++;
-    }
-
-    // Handle incoming push messages within 'new_message' events
-    // Removed the separate 'push_message' event listener
-    // All push messages are handled within the 'new_message' event
-
-    // Listen for initial messages from server
-    socket.on('initial_messages', function (data) {
-        console.debug("Received initial messages:", data);
-        addMessages(data.messages);
-        console.log("Number of initial messages received:", data.messages.length);
-    });
-
-    // Handle incoming new messages
-    socket.on('new_message', function (data) {
-        console.debug("Received new message:", data);
-        addMessages([data]);  
-    });
-
-    socket.on('total_processed', function (data) {
-        console.log('Total messages processed by server:', data.count);
-    });
-
-    // Handle incoming push messages within 'new_message' events
-    // Removed the separate 'push_message' event listener
-    // All push messages are handled within the 'new_message' event
-
-    // Stop displaying messages when disconnected
-    function stopMessageDisplay() {
-        clearTimeout(timeoutId);
-        clearTimeout(backupTimeoutId);
-        isDisplaying = false;
-    }
-
-    // Function to extract and display message content
-    function extractMessageContent(messageData) {
-        console.debug("Extracting message content:", messageData);
-
-        let messageText = messageData.message || "";
-        if (typeof messageText !== 'string') {
-            console.error("messageText is not a string:", messageText);
-            messageText = String(messageText);
-        }
-
-        $("#message-media").html(''); 
-
-        const imageRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
-        const videoRegex = /<video[^>]+src="([^"]+)"[^>]*>/g;
-
-        // Extract and clean message text
-        let cleanedMessage = messageText.replace(imageRegex, '').replace(videoRegex, '');
-
-        let imageMatch;
-        while ((imageMatch = imageRegex.exec(messageText)) !== null) {
-            if (imageMatch[1]) {
-                const imageUrl = imageMatch[1];
-                console.debug("Adding image to message media:", imageUrl);
-                $("#message-media").append(`<img src="${imageUrl}" alt="Photo" class="message-image">`);
-            }
-        }
-
-        let videoMatch;
-        while ((videoMatch = videoRegex.exec(messageText)) !== null) {
-            if (videoMatch[1]) {
-                const videoUrl = videoMatch[1];
-                console.debug("Adding video to message media:", videoUrl);
-                $("#message-media").append(`
-                    <video controls autoplay class="message-video">
-                        <source src="${videoUrl}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                `);
-            }
-        }
-
-        return cleanedMessage;
-    }
-
-    // Function to show a message
-    function showMessage() {
-        if (!isConnected) {
-            console.warn("Cannot display messages while disconnected.");
-            return;  // Don't show messages while disconnected
-        }
-
-        if (messages.length === 0) {
-            console.warn("No messages to display yet.");
-            isDisplaying = false;
-            return;
-        }
-
-        if (currentIndex >= messages.length) {
-            currentIndex = 0;
-        }
-
-        var messageData = messages[currentIndex];
-        
-        // Check if the message has already been displayed
-        if (messageData && !messageData.displayed) {
-            // Mark the message as displayed
-            messageData.displayed = true;
-
-            console.debug("Showing message: ", messageData);
-            
-            var channelName = messageData.channel;
-            var message = extractMessageContent(messageData);
-
-            var messageDateUTC = new Date(messageData.time);
-            if (isNaN(messageDateUTC.getTime())) {
-                console.error("Invalid message date:", messageData.time);
-                return;
-            }
-
-            var currentTime = new Date();
-            var currentTimeUTC = new Date(currentTime.toISOString());
-
-            var timeDifference = (currentTimeUTC - messageDateUTC) / (1000 * 60 * 60); // difference in hours
-
-            console.debug("Message date UTC:", messageDateUTC);
-            console.debug("Current time UTC:", currentTimeUTC);
-
-            var options = {
-                timeZone: 'Asia/Jerusalem',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            };
-            var messageTime = new Intl.DateTimeFormat('he-IL', options).format(messageDateUTC);
-
-            $("#channel-name").text(channelName);
-            $("#message-text").html(message);
-
-            if (timeDifference <= 2) {  // Adjusted to 2 hours
-                $("#message-time").removeClass("old-message").addClass("recent-message");
-            } else {
-                $("#message-time").removeClass("recent-message").addClass("old-message");
-            }
-
-            $("#message-time").text(`${translations['message_time']}: ${messageTime}`);
-
-            if (messageData.is_push) {
-                $("#push-indicator").text(translations['push_message']).show();
-            } else {
-                $("#push-indicator").hide();
-            }
-
-            currentIndex = (currentIndex + 1) % messages.length;
-
-            isDisplaying = true;
-
-            clearTimeout(timeoutId);
-            clearTimeout(backupTimeoutId);
-
-            // Set primary timeout for next message
-            timeoutId = setTimeout(function () {
-                console.debug("Timeout for next message reached, moving to next message.");
-                isDisplaying = false;
-                showMessage();
-            }, 5000); // 5 seconds per message
-
-            // Set backup timeout to handle any delays in displaying
-            backupTimeoutId = setTimeout(function () {
-                if (isDisplaying) {
-                    console.debug("Backup timeout reached, forcing next message.");
-                    isDisplaying = false;
-                    showMessage();
-                }
-            }, 15000); // 15 seconds backup timeout
-        } else {
-            console.warn("All messages have been displayed or invalid message.");
-            isDisplaying = false;
-        }
-    }
-
-    // Listen for initial messages from server
-    socket.on('initial_messages', function (data) {
-        console.debug("Received initial messages:", data);
-        addMessages(data.messages);
-        console.log("Number of initial messages received:", data.messages.length);
-    });
-
-    // Handle incoming new messages
-    socket.on('new_message', function (data) {
-        console.debug("Received new message:", data);
-        addMessages([data]);  
-    });
-
-    socket.on('total_processed', function (data) {
-        console.log('Total messages processed by server:', data.count);
-    });
-
-    // Remove the separate 'push_message' event listener since it's no longer used
-    /*
-    socket.on('push_message', function (data) {
-        console.debug("Received push message:", data);
-        console.debug("Push message status (is_push):", data.is_push ? 'Yes' : 'No');
-
-        // Ensure push message handling is explicit
-        if (!data.is_push) {
-            console.warn("Received a message without 'is_push' set to true. Setting it manually.");
-            data.is_push = true;
-        }
-
-        // Immediately display the push message
-        addMessages([data]);
-
-        // Immediately show the push message using the function
-        showPushMessage(data);
-
-        // Log that a push message was received
-        console.log("Immediate push message received and displayed.");
-    });
-    */
-
-    // Function to show a message
-    function showMessage() {
-        if (!isConnected) {
-            console.warn("Cannot display messages while disconnected.");
-            return;  // Don't show messages while disconnected
-        }
-
-        if (messages.length === 0) {
-            console.warn("No messages to display yet.");
-            isDisplaying = false;
-            return;
-        }
-
-        if (currentIndex >= messages.length) {
-            currentIndex = 0;
-        }
-
-        var messageData = messages[currentIndex];
-        
-        // Check if the message has already been displayed
-        if (messageData && !messageData.displayed) {
-            // Mark the message as displayed
-            messageData.displayed = true;
-
-            console.debug("Showing message: ", messageData);
-            
-            var channelName = messageData.channel;
-            var message = extractMessageContent(messageData);
-
-            var messageDateUTC = new Date(messageData.time);
-            if (isNaN(messageDateUTC.getTime())) {
-                console.error("Invalid message date:", messageData.time);
-                return;
-            }
-
-            var currentTime = new Date();
-            var currentTimeUTC = new Date(currentTime.toISOString());
-
-            var timeDifference = (currentTimeUTC - messageDateUTC) / (1000 * 60 * 60); // difference in hours
-
-            console.debug("Message date UTC:", messageDateUTC);
-            console.debug("Current time UTC:", currentTimeUTC);
-
-            var options = {
-                timeZone: 'Asia/Jerusalem',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            };
-            var messageTime = new Intl.DateTimeFormat('he-IL', options).format(messageDateUTC);
-
-            $("#channel-name").text(channelName);
-            $("#message-text").html(message);
-
-            if (timeDifference <= 2) {  // Adjusted to 2 hours
-                $("#message-time").removeClass("old-message").addClass("recent-message");
-            } else {
-                $("#message-time").removeClass("recent-message").addClass("old-message");
-            }
-
-            $("#message-time").text(`${translations['message_time']}: ${messageTime}`);
-
-            if (messageData.is_push) {
-                $("#push-indicator").text(translations['push_message']).show();
-            } else {
-                $("#push-indicator").hide();
-            }
-
-            currentIndex = (currentIndex + 1) % messages.length;
-
-            isDisplaying = true;
-
-            clearTimeout(timeoutId);
-            clearTimeout(backupTimeoutId);
-
-            // Set primary timeout for next message
-            timeoutId = setTimeout(function () {
-                console.debug("Timeout for next message reached, moving to next message.");
-                isDisplaying = false;
-                showMessage();
-            }, 5000); // 5 seconds per message
-
-            // Set backup timeout to handle any delays in displaying
-            backupTimeoutId = setTimeout(function () {
-                if (isDisplaying) {
-                    console.debug("Backup timeout reached, forcing next message.");
-                    isDisplaying = false;
-                    showMessage();
-                }
-            }, 15000); // 15 seconds backup timeout
-        } else {
-            console.warn("All messages have been displayed or invalid message.");
-            isDisplaying = false;
-        }
-    }
-
-    // Handle reconnecting logic
-    function handleReconnection() {
-        if (reconnectAttempts < maxReconnectAttempts) {
-            attemptReconnection();
-        } else {
-            console.error('Maximum reconnection attempts reached.');
-            $("#push-indicator").text('לא ניתן להתחבר לשרת. אנא נסה שוב מאוחר יותר.').show();
-        }
     }
 
     // Periodically remove old messages

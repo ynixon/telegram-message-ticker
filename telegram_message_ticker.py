@@ -44,6 +44,8 @@ LAST_PROCESSED_MESSAGE = {}
 MAX_LATEST_MESSAGES = 100
 app.config["JSON_AS_ASCII"] = False
 INITIAL_FETCH_DONE = False
+INITIAL_FETCH_LOGGED = False
+
 
 # Initialize logging with timestamps
 logging.basicConfig(
@@ -128,7 +130,7 @@ def load_config(args=None):
             logger.info(f"Loaded config file contents: {file_config}")
             cfg.update(file_config)
             logger.debug("Config after merge: %s", cfg)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, IOError) as e:
         logger.error("Failed to decode JSON from config file.")
         sys.exit(1)
 
@@ -190,7 +192,8 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
             return media_type, media_tag
 
         file_path = os.path.join(media_dir, filename)
-        await telegram_client.download_media(message, file=file_path)
+        if not os.path.exists(file_path):
+            await telegram_client.download_media(message, file=file_path)
 
         logger.info("Downloaded %s for message ID %d: %s", media_type, message.id, file_path)
 
@@ -364,12 +367,15 @@ async def download_and_update_message(telegram_client, message, media_dir, chann
 
 async def get_latest_messages_once(telegram_client, cfg):
     """Fetch the latest messages once and stop."""
-    global INITIAL_FETCH_DONE, LATEST_MESSAGES, TOTAL_MESSAGES_FETCHED, TOTAL_MESSAGES_PROCESSED
+    global INITIAL_FETCH_DONE, LATEST_MESSAGES, TOTAL_MESSAGES_FETCHED, TOTAL_MESSAGES_PROCESSED, INITIAL_FETCH_LOGGED
     global channel_message_counters, LAST_PROCESSED_MESSAGE
 
     # Check if the initial fetch is done
     if INITIAL_FETCH_DONE:
-        logger.info("Initial fetch already completed. Skipping fetch and waiting for push notifications.")
+        # Log only once if the initial fetch is done
+        if not INITIAL_FETCH_LOGGED:
+            logger.info("Initial fetch already completed. Skipping fetch and waiting for push notifications.")
+            INITIAL_FETCH_LOGGED = True  # Set to True so it doesn't log again
         return
 
     media_dir = cfg.get("media_folder", "media")
