@@ -3,24 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <title>{{ translations['title'] }}</title>
+    
     <!-- 1. Include Socket.IO -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+    
     <!-- 2. Include jQuery -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <!-- 3. Include Your Custom Script -->
-    <script src="{{ url_for('static', filename='ticker.js') }}"></script>
-    <!-- 4. Include Your CSS (if any) -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-
-    <!-- Embed the translations object -->
+    
+    <!-- Embed the translations and message_age_limit object -->
     <script type="text/javascript">
         var translations = {{ translations | tojson }};
-
+        
+        // Safely passing message_age_limit from the server to client in hours
+        var message_age_limit_in_hours = {{ message_age_limit | default(2) | tojson }};
+        
+        // Convert message_age_limit from hours to minutes
+        var message_age_limit = message_age_limit_in_hours * 60;
+        
         // Define the changeLanguage function before it's used
         function changeLanguage(lang) {
             window.location.href = `/set_language/${lang}`;
         }
     </script>
+    
+    <!-- 3. Include Your Custom Script -->
+    <script src="{{ url_for('static', filename='ticker.js') }}"></script>
+    
+    <!-- 4. Include Your CSS (if any) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
     <h1>{{ translations['title'] }}</h1>
@@ -32,13 +42,21 @@
     <!-- Loading message to display before the first message is loaded -->
     <div id="loading-message" class="loading-text">{{ translations['loading_message'] }}</div>
     
+    <!-- Section to display messages -->
     <div id="messages" style="display:none;"> <!-- Hide messages initially -->
         <h2 id="channel-name">{{ translations['channel'] }}</h2>
         <div id="message-text"></div>
         <div id="message-media"></div>
         <div id="message-time">{{ translations['message_time'] }}</div>
-        <div id="push-indicator" style="display:none; color: red;">{{ translations['push_message'] }}</div> <!-- Push message indicator -->
     </div>
+    
+    <!-- Push indicator and lost connection -->
+    <div id="connection-status">
+        <span id="push-indicator" style="display:none; color: red;">{{ translations['push_message'] }}</span> <!-- Push message indicator -->
+        <span id="lost-connection" style="display:none; color: red;">{{ translations['lost_connection'] }}</span> <!-- Lost connection indicator -->
+    </div>
+
+    <!-- Refresh feed button -->
     <button id="refreshFeed">{{ translations['refresh_feed'] }}</button>
 </body>
 </html>
