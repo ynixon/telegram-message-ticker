@@ -122,7 +122,28 @@ jobs:
           echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------ #
-      # 6. Build debug APK
+      # 6. Bundle libc++_shared.so for greenlet
+      #
+      #    greenlet 2.x is a C++ extension; the NDK compiles it against
+      #    libc++_shared.so (the shared C++ STL).  Android does NOT ship
+      #    this library as a system library, so it must be bundled inside
+      #    the APK under lib/<abi>/.  buildozer.spec's android.add_libs_*
+      #    settings copy it into the right place during packaging.
+      #
+      #    The runner's pre-installed NDK (ANDROID_NDK_HOME) is always
+      #    present and provides ABI-stable libc++_shared.so files.
+      # ------------------------------------------------------------------ #
+      - name: Bundle libc++_shared.so for greenlet
+        run: |
+          SYSROOT="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          mkdir -p libs/armeabi-v7a libs/arm64-v8a
+          cp "$SYSROOT/usr/lib/arm-linux-androideabi/libc++_shared.so" libs/armeabi-v7a/
+          cp "$SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" libs/arm64-v8a/
+          echo "Copied libc++_shared.so:"
+          ls -lh libs/armeabi-v7a/libc++_shared.so libs/arm64-v8a/libc++_shared.so
+
+      # ------------------------------------------------------------------ #
+      # 7. Build debug APK
       # ------------------------------------------------------------------ #
       - name: Build debug APK
         run: buildozer android debug
@@ -130,7 +151,7 @@ jobs:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       # ------------------------------------------------------------------ #
-      # 7. Rename artifact to something meaningful
+      # 8. Rename artifact to something meaningful
       # ------------------------------------------------------------------ #
       - name: Rename APK
         run: |
@@ -138,7 +159,7 @@ jobs:
           mv "$APK" bin/telegram-message-ticker-debug.apk
 
       # ------------------------------------------------------------------ #
-      # 8. Upload APK as workflow artifact (always downloadable)
+      # 9. Upload APK as workflow artifact (always downloadable)
       # ------------------------------------------------------------------ #
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
