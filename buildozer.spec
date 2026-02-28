@@ -51,6 +51,7 @@ requirements =
     python-engineio==3.14.2,
     eventlet==0.33.3,
     greenlet==2.0.2,
+    dnspython,
     telethon==1.29.0,
     pyaes,
     rsa,
