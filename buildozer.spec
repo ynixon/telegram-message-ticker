@@ -16,18 +16,30 @@ version = 1.0
 # Requirements
 # NOTE: newspaper3k is intentionally excluded – it is not imported by the
 #       application code and brings in heavy native dependencies.
+#
+# Flask 2.x dropped setup.py (moved to pyproject.toml), which breaks the
+# python-for-android recipe build system that calls "python setup.py install".
+# We pin the entire Flask ecosystem to the last Flask-1.x-compatible stack:
+#   - flask 1.1.4 (last 1.x release, has setup.py)
+#   - werkzeug 1.0.1 (flask 1.x is incompatible with werkzeug 2.x at runtime)
+#   - jinja2 2.11.3 / markupsafe 1.1.1 (matching pair, both have setup.py)
+#   - itsdangerous 1.1.0 (2.x removed APIs that flask 1.x uses)
+#   - click 7.1.2 (flask 1.x CLI is incompatible with click 8.x)
+#   - flask-socketio 4.3.2 (5.x requires flask 2.x)
+#   - python-socketio 4.6.1 (required by flask-socketio 4.x)
+#   - python-engineio 3.14.2 (required by python-socketio 4.x)
 requirements =
     python3,
     kivy==2.3.0,
-    flask==2.3.2,
-    werkzeug,
-    jinja2,
-    click,
-    itsdangerous,
-    markupsafe,
-    flask-socketio,
-    python-socketio,
-    python-engineio,
+    flask==1.1.4,
+    werkzeug==1.0.1,
+    jinja2==2.11.3,
+    click==7.1.2,
+    itsdangerous==1.1.0,
+    markupsafe==1.1.1,
+    flask-socketio==4.3.2,
+    python-socketio==4.6.1,
+    python-engineio==3.14.2,
     eventlet,
     greenlet,
     telethon==1.29.0,
