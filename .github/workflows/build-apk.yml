@@ -44,7 +44,13 @@ jobs:
           cache: 'pip'
 
       - name: Install Buildozer & Cython
-        run: pip install --upgrade buildozer==1.5.0 cython virtualenv
+        # Cython 3.0+ removed the implicit 'long' builtin alias (was int in Py3).
+        # The pyjnius Cython source still uses 'isinstance(arg, long)' and fails
+        # to cythonize under Cython 3.x with:
+        #   "undeclared name not builtin: long"
+        # Cython 0.29.37 is the last 0.29.x release; it fully supports Python 3.11
+        # (added in 0.29.36) and retains the 'long' backward-compat alias.
+        run: pip install --upgrade buildozer==1.5.0 "cython==0.29.37" virtualenv
 
       # ------------------------------------------------------------------ #
       # 4. Cache the heavy .buildozer directory (SDK, NDK, wheels)
