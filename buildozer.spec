@@ -32,6 +32,11 @@ version = 1.0
 #       exc_type/exc_traceback on _err_stackitem, recursion_depth on _ts, frame on _ts,
 #       use_tracing on _ts, lvalue Py_REFCNT; all fixed in greenlet 2.0.0)
 #   - eventlet 0.33.3 (first eventlet release with Python 3.11 + greenlet 2.x support)
+#   - lxml excluded: lxml 4.8.0 (p4a recipe default) uses Cython-generated C that
+#     directly accesses PyFrameObject internals (f_back, f_lineno) which became an
+#     opaque type in Python 3.11.  The app uses BeautifulSoup exclusively with
+#     "html.parser" (Python's built-in parser), never "lxml", so the dependency
+#     is unused and safe to drop.
 requirements =
     python3,
     kivy==2.3.0,
@@ -56,7 +61,6 @@ requirements =
     charset-normalizer,
     idna,
     beautifulsoup4,
-    lxml,
     android,
     jnius
 
