@@ -109,6 +109,12 @@ jobs:
           echo "SDK setup complete."
           ls "$SDK_DIR/tools/bin/sdkmanager"
 
+          # Export ANDROID_HOME for all subsequent steps.
+          # Note: ${{ env.HOME }} does not expand in step env: blocks because
+          # HOME is a shell variable, not a GitHub Actions env context variable.
+          # Writing to GITHUB_ENV is the correct way to pass it forward.
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+
       # ------------------------------------------------------------------ #
       # 6. Build debug APK
       # ------------------------------------------------------------------ #
@@ -116,7 +122,6 @@ jobs:
         run: buildozer android debug
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-          ANDROID_HOME: ${{ env.HOME }}/.buildozer/android/platform/android-sdk
 
       # ------------------------------------------------------------------ #
       # 7. Rename artifact to something meaningful
