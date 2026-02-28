@@ -128,8 +128,8 @@ class SetupScreen(BoxLayout):
     def __init__(self, on_start, **kwargs):
         super().__init__(
             orientation='vertical',
-            padding=[24, 48, 24, 24],
-            spacing=14,
+            padding=[30, 40, 30, 24],
+            spacing=20,
             **kwargs
         )
         self.on_start_cb = on_start
@@ -137,39 +137,55 @@ class SetupScreen(BoxLayout):
         self.add_widget(Label(
             text='[b]Telegram Message Ticker[/b]',
             markup=True,
-            font_size='22sp',
-            size_hint_y=None, height=52,
+            font_size='24sp',
+            size_hint_y=None, height=56,
         ))
         self.add_widget(Label(
-            text='Enter your API credentials from my.telegram.org',
+            text='Get your credentials at my.telegram.org → API development tools',
             font_size='13sp',
-            color=(0.7, 0.7, 0.7, 1),
-            size_hint_y=None, height=38,
+            color=(0.75, 0.75, 0.75, 1),
+            size_hint_y=None, height=44,
+            halign='center',
+            text_size=(Window.width - 60, None),
         ))
 
-        self.api_id_input = TextInput(
-            hint_text='API ID (numbers only)',
-            multiline=False,
-            input_filter='int',
-            size_hint_y=None, height=46,
-        )
-        self.api_hash_input = TextInput(
-            hint_text='API Hash',
-            multiline=False,
-            size_hint_y=None, height=46,
-        )
-        self.phone_input = TextInput(
-            hint_text='Phone number  e.g. +12223334444',
-            multiline=False,
-            size_hint_y=None, height=46,
-        )
+        # Helper: labelled input field
+        def _field(label_text, hint, **kw):
+            box = BoxLayout(orientation='vertical', size_hint_y=None, height=88, spacing=4)
+            box.add_widget(Label(
+                text=label_text,
+                font_size='14sp',
+                color=(0.9, 0.9, 0.9, 1),
+                size_hint_y=None, height=26,
+                halign='left',
+                text_size=(Window.width - 60, None),
+            ))
+            inp = TextInput(
+                hint_text=hint,
+                hint_text_color=(0.45, 0.45, 0.45, 1),
+                foreground_color=(0, 0, 0, 1),
+                background_color=(1, 1, 1, 1),
+                cursor_color=(0.1, 0.1, 0.1, 1),
+                multiline=False,
+                font_size='16sp',
+                padding=[12, 14, 12, 14],
+                size_hint_y=None, height=58,
+                **kw
+            )
+            box.add_widget(inp)
+            return box, inp
 
-        for widget in (self.api_id_input, self.api_hash_input, self.phone_input):
-            self.add_widget(widget)
+        id_box, self.api_id_input = _field('API ID', 'e.g. 5390776', input_filter='int')
+        hash_box, self.api_hash_input = _field('API Hash', 'e.g. 2df8c2493f52845f2045f035499e837b')
+        phone_box, self.phone_input = _field('Phone number', 'e.g. +12223334444')
+
+        for box in (id_box, hash_box, phone_box):
+            self.add_widget(box)
 
         start_btn = Button(
             text='Start',
-            size_hint_y=None, height=52,
+            size_hint_y=None, height=58,
+            font_size='17sp',
             background_color=(0.18, 0.55, 0.88, 1),
         )
         start_btn.bind(on_press=self._submit)
@@ -178,7 +194,8 @@ class SetupScreen(BoxLayout):
         self.msg_label = Label(
             text='',
             color=(1, 0.35, 0.35, 1),
-            size_hint_y=None, height=40,
+            font_size='14sp',
+            size_hint_y=None, height=44,
         )
         self.add_widget(self.msg_label)
 
@@ -211,16 +228,35 @@ class SetupScreen(BoxLayout):
 class LoadingScreen(BoxLayout):
     """Shown while the server is starting up."""
 
-    def __init__(self, **kwargs):
-        super().__init__(orientation='vertical', **kwargs)
+    def __init__(self, on_reset, **kwargs):
+        super().__init__(orientation='vertical', padding=32, spacing=24, **kwargs)
+        self._on_reset = on_reset
+
         self._label = Label(
             text='Starting server\u2026',
             font_size='17sp',
+            halign='center',
+            text_size=(Window.width - 64, None),
         )
         self.add_widget(self._label)
 
+        self._reset_btn = Button(
+            text='Reset Credentials & Try Again',
+            size_hint_y=None, height=56,
+            font_size='15sp',
+            background_color=(0.75, 0.18, 0.18, 1),
+            opacity=0,
+            disabled=True,
+        )
+        self._reset_btn.bind(on_press=lambda *_: self._on_reset())
+        self.add_widget(self._reset_btn)
+
     def set_text(self, text):
         self._label.text = text
+
+    def show_reset_button(self):
+        self._reset_btn.opacity = 1
+        self._reset_btn.disabled = False
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +282,11 @@ class TelegramTickerApp(App):
     def _begin_server(self, cfg):
         """Replace whatever is on screen with a loading screen and
         launch the backend server thread."""
+        global _server_error
+        _server_error = None
+
         self._container.clear_widgets()
-        self._loading = LoadingScreen()
+        self._loading = LoadingScreen(on_reset=self._reset)
         self._container.add_widget(self._loading)
 
         threading.Thread(
@@ -259,12 +298,25 @@ class TelegramTickerApp(App):
         Clock.schedule_interval(self._poll_server, 1.0)
 
     # ------------------------------------------------------------------
+    def _reset(self):
+        """Clear saved credentials and return to the setup screen."""
+        global _server_error
+        _server_error = None
+        try:
+            os.remove(get_config_path())
+        except OSError:
+            pass
+        self._container.clear_widgets()
+        self._container.add_widget(SetupScreen(on_start=self._begin_server))
+
+    # ------------------------------------------------------------------
     def _poll_server(self, dt):
         """Check whether the Flask server is accepting connections yet."""
         if _server_error:
             self._loading.set_text(
-                f'Server error:\n{_server_error}\n\nCheck your credentials and restart.'
+                f'Error:\n{_server_error}\n\nTap the button below to fix your credentials.'
             )
+            self._loading.show_reset_button()
             return False  # stop polling
 
         import socket

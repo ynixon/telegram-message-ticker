@@ -61,6 +61,7 @@ requirements =
     charset-normalizer,
     idna,
     beautifulsoup4,
+    typing_extensions,
     android,
     jnius
 
