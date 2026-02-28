@@ -28,6 +28,10 @@ version = 1.0
 #   - flask-socketio 4.3.2 (5.x requires flask 2.x)
 #   - python-socketio 4.6.1 (required by flask-socketio 4.x)
 #   - python-engineio 3.14.2 (required by python-socketio 4.x)
+#   - greenlet 2.0.2 (old greenlet uses CPython internals removed in Python 3.11:
+#       exc_type/exc_traceback on _err_stackitem, recursion_depth on _ts, frame on _ts,
+#       use_tracing on _ts, lvalue Py_REFCNT; all fixed in greenlet 2.0.0)
+#   - eventlet 0.33.3 (first eventlet release with Python 3.11 + greenlet 2.x support)
 requirements =
     python3,
     kivy==2.3.0,
@@ -40,8 +44,8 @@ requirements =
     flask-socketio==4.3.2,
     python-socketio==4.6.1,
     python-engineio==3.14.2,
-    eventlet,
-    greenlet,
+    eventlet==0.33.3,
+    greenlet==2.0.2,
     telethon==1.29.0,
     pyaes,
     rsa,
