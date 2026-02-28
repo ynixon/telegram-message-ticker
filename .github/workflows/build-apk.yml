@@ -58,17 +58,56 @@ jobs:
             buildozer-${{ runner.os }}-
 
       # ------------------------------------------------------------------ #
-      # 5. Accept Android SDK licences (needed on first run)
+      # 5. Pre-install Android SDK command-line tools + legacy shim
+      #
+      #    Buildozer 1.5.0 looks for sdkmanager at the OLD path:
+      #      android-sdk/tools/bin/sdkmanager
+      #    Modern cmdline-tools install it at:
+      #      android-sdk/cmdline-tools/latest/bin/sdkmanager
+      #    We download the cmdline-tools, install them, then symlink the
+      #    old path so Buildozer can find sdkmanager.
       # ------------------------------------------------------------------ #
-      - name: Pre-accept Android SDK licences
+      - name: Setup Android SDK & legacy sdkmanager shim
         run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
-            > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" \
-            >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "d975f751698a77b662f1254ddbeed3901e976f5a" \
-            > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+          SDK_DIR="$HOME/.buildozer/android/platform/android-sdk"
+          CMDTOOLS="$SDK_DIR/cmdline-tools/latest"
+          SDKMANAGER="$CMDTOOLS/bin/sdkmanager"
+
+          # Skip if sdkmanager already present (cache hit)
+          if [ -f "$SDKMANAGER" ]; then
+            echo "sdkmanager already installed (cache hit), skipping download."
+          else
+            echo "Downloading Android command-line tools..."
+            mkdir -p "$SDK_DIR/cmdline-tools"
+            curl -Lo /tmp/cmdtools.zip \
+              "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+            unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools_extracted
+            # The zip contains a top-level 'cmdline-tools' folder
+            mv /tmp/cmdtools_extracted/cmdline-tools "$CMDTOOLS"
+            rm -rf /tmp/cmdtools.zip /tmp/cmdtools_extracted
+          fi
+
+          # Always ensure the legacy shim exists (needed even after cache restore)
+          mkdir -p "$SDK_DIR/tools/bin"
+          if [ ! -f "$SDK_DIR/tools/bin/sdkmanager" ]; then
+            ln -sf "$SDKMANAGER" "$SDK_DIR/tools/bin/sdkmanager"
+          fi
+
+          # Accept licences
+          mkdir -p "$SDK_DIR/licenses"
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >  "$SDK_DIR/licenses/android-sdk-license"
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> "$SDK_DIR/licenses/android-sdk-license"
+          echo "d975f751698a77b662f1254ddbeed3901e976f5a" >  "$SDK_DIR/licenses/android-sdk-preview-license"
+
+          # Install required SDK components
+          export ANDROID_HOME="$SDK_DIR"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.0" 2>&1 | grep -v "^\[=" | tail -20
+
+          echo "SDK setup complete."
+          ls "$SDK_DIR/tools/bin/sdkmanager"
 
       # ------------------------------------------------------------------ #
       # 6. Build debug APK
@@ -77,6 +116,7 @@ jobs:
         run: buildozer android debug
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_HOME: ${{ env.HOME }}/.buildozer/android/platform/android-sdk
 
       # ------------------------------------------------------------------ #
       # 7. Rename artifact to something meaningful
