@@ -12,3 +12,10 @@ user_session.session-journal
 channels.json
 config.json
 /.gitignore
+
+# Android / Buildozer build artifacts
+/.buildozer/
+/bin/
+*.apk
+*.aab
+*.keystore
