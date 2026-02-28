@@ -84,6 +84,14 @@ android.private_storage = True
 android.accept_sdk_license = True
 android.archs = arm64-v8a, armeabi-v7a
 
+# greenlet 2.x (required for Python 3.11) is a C++ extension that links
+# against libc++_shared.so (the NDK shared C++ STL).  Android does not
+# ship this as a system library; it must be bundled inside the APK.
+# The workflow copies these from the runner's pre-installed NDK before
+# the build (see step "Bundle libc++_shared.so for greenlet").
+android.add_libs_armeabi_v7a = libs/armeabi-v7a/libc++_shared.so
+android.add_libs_arm64_v8a = libs/arm64-v8a/libc++_shared.so
+
 # Release/debug artifacts
 android.debug_artifact = apk
 android.release_artifact = aab
