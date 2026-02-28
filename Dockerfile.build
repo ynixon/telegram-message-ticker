@@ -1,0 +1,45 @@
+# Dockerfile.build
+# Builds the Telegram Message Ticker Android APK inside a container.
+#
+# Usage (from the repo root):
+#
+#   docker build -f Dockerfile.build -t tmt-builder .
+#   docker run --rm -v "$(pwd)/bin:/output" tmt-builder
+#
+# The debug APK will appear in the local ./bin/ directory.
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# System packages
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+    git zip unzip openjdk-17-jdk python3 python3-pip \
+    autoconf libtool pkg-config \
+    zlib1g-dev libncurses5-dev libncursesw5-dev \
+    cmake libffi-dev libssl-dev libsqlite3-dev \
+    ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Python build tools
+RUN pip3 install --no-cache-dir --upgrade buildozer==1.5.0 cython virtualenv
+
+# Pre-accept Android SDK licences
+RUN mkdir -p /root/.buildozer/android/platform/android-sdk/licenses \
+ && echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
+      > /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license \
+ && echo "84831b9409646a918e30573bab4c9c91346d8abd" \
+     >> /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license \
+ && echo "d975f751698a77b662f1254ddbeed3901e976f5a" \
+      > /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+
+WORKDIR /app
+COPY . /app/
+
+# Build the APK (SDK/NDK will be downloaded on first run)
+RUN buildozer android debug
+
+# Copy APK to /output (bind-mount a host directory here)
+CMD cp bin/*.apk /output/ && echo "APK copied to /output/"
