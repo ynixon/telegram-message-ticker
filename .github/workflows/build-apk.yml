@@ -68,45 +68,6 @@ jobs:
             buildozer-${{ runner.os }}-
 
       # ------------------------------------------------------------------ #
-      # 4b. Force Gradle 7.6 in every gradle-wrapper.properties
-      #
-      #     The p4a sdl2 bootstrap ships a gradle-wrapper.properties that
-      #     may reference an old Gradle version incompatible with Java 17.
-      #     Gradle 7.6 is the last 7.x release and has full Java 17 support.
-      #
-      #     We patch in two places:
-      #       a) The pip-installed p4a template (used when building from
-      #          scratch / cache miss) so new distributions get 7.6.
-      #       b) Any existing distribution in .buildozer (cache hit) so
-      #          previously-built dists are also upgraded.
-      # ------------------------------------------------------------------ #
-      - name: Force Gradle 7.6 for Java 17 compatibility
-        run: |
-          GRADLE_76="https\\://services.gradle.org/distributions/gradle-7.6-bin.zip"
-          PROPS_CONTENT="distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=${GRADLE_76}
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists"
-
-          # (a) Patch the p4a-installed template so fresh distributions use 7.6
-          P4A_DIR=$(python -c "import pythonforandroid, os; print(os.path.dirname(pythonforandroid.__file__))" 2>/dev/null || true)
-          if [ -n "$P4A_DIR" ]; then
-            find "$P4A_DIR" -name "gradle-wrapper.properties" | while read f; do
-              echo "Patching p4a template: $f"
-              printf '%s\n' "$PROPS_CONTENT" > "$f"
-            done
-          fi
-
-          # (b) Patch any existing distribution in .buildozer (cache hit)
-          find .buildozer -name "gradle-wrapper.properties" 2>/dev/null | while read f; do
-            echo "Patching cached dist: $f"
-            printf '%s\n' "$PROPS_CONTENT" > "$f"
-          done
-
-          echo "Gradle wrapper patching complete."
-
-      # ------------------------------------------------------------------ #
       # 5. Pre-install Android SDK command-line tools + legacy shim
       #
       #    Buildozer 1.5.0 looks for sdkmanager at the OLD path:
@@ -218,51 +179,50 @@ jobs:
       # ------------------------------------------------------------------ #
       # 7. Build debug APK
       #
-      #    JAVA_TOOL_OPTIONS: JVM flags picked up by every Java process
-      #    (including Gradle) to allow reflection access that Java 17
-      #    restricts by default.  Required if the Gradle version is <7.3.
+      #    NOTE: Do NOT set JAVA_TOOL_OPTIONS here.  That variable is
+      #    inherited by every JVM subprocess (including sdkmanager which
+      #    uses Java 8).  Flags like --add-opens are Java 9+ only and
+      #    cause sdkmanager to crash with "Unrecognized option".
+      #    p4a uses Gradle 8.x which supports Java 17 natively — no
+      #    extra JVM flags are needed.
       # ------------------------------------------------------------------ #
       - name: Build debug APK
         run: buildozer android debug
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-          JAVA_TOOL_OPTIONS: >-
-            --add-opens java.base/java.io=ALL-UNNAMED
-            --add-opens java.base/java.lang=ALL-UNNAMED
-            --add-opens java.base/java.lang.invoke=ALL-UNNAMED
-            --add-opens java.base/java.util=ALL-UNNAMED
-            --add-opens java.base/java.util.concurrent=ALL-UNNAMED
-            --add-opens java.base/sun.nio.ch=ALL-UNNAMED
 
       # ------------------------------------------------------------------ #
-      # 7b. Diagnose Gradle failures
+      # 7b. Diagnose build failures
       #
-      #     Runs only when the build step above fails.  Re-executes gradlew
-      #     with --stacktrace so the real Java/Gradle error is visible in the
-      #     CI log.  Also prints the generated AndroidManifest.xml so XML
-      #     issues are immediately obvious.
+      #     Runs only when the build step above fails.  Prints the
+      #     gradle-wrapper.properties, generated AndroidManifest.xml, and
+      #     re-runs gradlew with --stacktrace so the real error is visible.
       # ------------------------------------------------------------------ #
-      - name: Diagnose Gradle failure
+      - name: Diagnose build failure
         if: failure()
         run: |
           GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1 || true)
           if [ -z "$GRADLEW" ]; then
-            echo "gradlew not found – the distribution was not created (build failed before Gradle)."
+            echo "gradlew not found – build failed before the Gradle distribution was created."
+            echo "Check the sdkmanager / Python compilation steps above for the real error."
             exit 0
           fi
           DIST_DIR=$(dirname "$GRADLEW")
+
           echo "=== gradle-wrapper.properties ==="
           cat "$DIST_DIR/gradle/wrapper/gradle-wrapper.properties" || true
+
           echo ""
           echo "=== AndroidManifest.xml ==="
-          find "$DIST_DIR" -name "AndroidManifest.xml" | head -3 | while read f; do
+          find .buildozer -name "AndroidManifest.xml" 2>/dev/null | head -5 | while read f; do
             echo "--- $f ---"
             cat "$f"
           done
+
           echo ""
           echo "=== gradlew clean assembleDebug --stacktrace (last 400 lines) ==="
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-          export JAVA_TOOL_OPTIONS="--add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED"
+          # Do NOT set JAVA_TOOL_OPTIONS – sdkmanager (Java 8) would reject --add-opens
           cd "$DIST_DIR"
           chmod +x gradlew
           ./gradlew clean assembleDebug --stacktrace 2>&1 | tail -400 || true
