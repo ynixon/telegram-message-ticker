@@ -17,6 +17,7 @@ import json
 import threading
 import logging
 import collections
+import datetime
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -24,9 +25,11 @@ from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from kivy.uix.scrollview import ScrollView
 from kivy.clock import Clock
 from kivy.utils import platform
 from kivy.core.window import Window
+from kivy.metrics import dp
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -35,15 +38,16 @@ SERVER_PORT = 3005
 _server_error = None
 
 # Thread-safe progress message queue (newest last, shown in loading screen)
-_status_msgs = collections.deque(maxlen=12)
+_status_msgs = collections.deque(maxlen=40)
 _status_lock = threading.Lock()
 
 
 def _on_status(msg):
     """Receives live progress messages from the background server thread."""
     logger.info("[STATUS] %s", msg)
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
     with _status_lock:
-        _status_msgs.append(msg)
+        _status_msgs.append(f'[{ts}] {msg}')
 
 
 # ---------------------------------------------------------------------------
@@ -141,40 +145,48 @@ class SetupScreen(BoxLayout):
     def __init__(self, on_start, saved_cfg=None, **kwargs):
         super().__init__(
             orientation='vertical',
-            padding=[30, 40, 30, 24],
-            spacing=20,
             **kwargs
         )
         self.on_start_cb = on_start
 
-        self.add_widget(Label(
+        # ── Scrollable form area ────────────────────────────────────────────
+        scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
+        form = BoxLayout(
+            orientation='vertical',
+            padding=[dp(20), dp(28), dp(20), dp(16)],
+            spacing=dp(16),
+            size_hint_y=None,
+        )
+        form.bind(minimum_height=form.setter('height'))
+
+        form.add_widget(Label(
             text='[b]Telegram Message Ticker[/b]',
             markup=True,
             font_size='24sp',
-            size_hint_y=None, height=56,
+            size_hint_y=None, height=dp(56),
         ))
-        self.add_widget(Label(
+        form.add_widget(Label(
             text='Get your credentials at my.telegram.org \u2192 API development tools',
             font_size='13sp',
             color=(0.75, 0.75, 0.75, 1),
-            size_hint_y=None, height=44,
+            size_hint_y=None, height=dp(48),
             halign='center',
-            text_size=(Window.width - 60, None),
+            text_size=(Window.width - dp(40), None),
         ))
 
         def _field(label_text, hint, multiline=False, **kw):
-            # Two-line hash fields are taller; single-line fields slightly shorter
-            inp_height = 96 if multiline else 64
-            box_height = 32 + inp_height  # label(28) + spacing(4) + input
+            # Use density-independent pixels so fields look right on all screens
+            inp_height = dp(100) if multiline else dp(72)
+            box_height = dp(30) + dp(6) + inp_height
             box = BoxLayout(orientation='vertical', size_hint_y=None,
-                            height=box_height, spacing=4)
+                            height=box_height, spacing=dp(6))
             box.add_widget(Label(
                 text=label_text,
                 font_size='14sp',
                 color=(0.9, 0.9, 0.9, 1),
-                size_hint_y=None, height=28,
+                size_hint_y=None, height=dp(30),
                 halign='left',
-                text_size=(Window.width - 60, None),
+                text_size=(Window.width - dp(40), None),
             ))
             inp = TextInput(
                 hint_text=hint,
@@ -183,8 +195,8 @@ class SetupScreen(BoxLayout):
                 background_color=(1, 1, 1, 1),
                 cursor_color=(0.1, 0.1, 0.1, 1),
                 multiline=multiline,
-                font_size='15sp',
-                padding=[12, 12, 12, 12],
+                font_size='16sp',
+                padding=[dp(12), dp(14), dp(12), dp(14)],
                 size_hint_y=None, height=inp_height,
                 **kw
             )
@@ -200,31 +212,43 @@ class SetupScreen(BoxLayout):
         phone_box, self.phone_input    = _field('Phone number', 'e.g. +12223334444')
 
         for box in (id_box, hash_box, phone_box):
-            self.add_widget(box)
+            form.add_widget(box)
+
+        scroll.add_widget(form)
+        self.add_widget(scroll)
+
+        # ── Fixed bottom bar (always visible) ──────────────────────────────
+        bottom = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=dp(58) + dp(10) + dp(40) + dp(24),
+            padding=[dp(20), dp(10), dp(20), dp(14)],
+            spacing=dp(10),
+        )
+
+        start_btn = Button(
+            text='Start',
+            size_hint_y=None, height=dp(58),
+            font_size='17sp',
+            background_color=(0.18, 0.55, 0.88, 1),
+        )
+        start_btn.bind(on_press=self._submit)
+        bottom.add_widget(start_btn)
+
+        self.msg_label = Label(
+            text='',
+            color=(1, 0.35, 0.35, 1),
+            font_size='14sp',
+            size_hint_y=None, height=dp(40),
+        )
+        bottom.add_widget(self.msg_label)
+        self.add_widget(bottom)
 
         # Pre-fill from saved config so the user can review / edit before starting
         if saved_cfg:
             self.api_id_input.text   = str(saved_cfg.get('api_id',       ''))
             self.api_hash_input.text = str(saved_cfg.get('api_hash',     ''))
             self.phone_input.text    = str(saved_cfg.get('phone_number', ''))
-
-        start_btn = Button(
-            text='Start',
-            size_hint_y=None, height=58,
-            font_size='17sp',
-            background_color=(0.18, 0.55, 0.88, 1),
-        )
-        start_btn.bind(on_press=self._submit)
-        self.add_widget(start_btn)
-
-        self.msg_label = Label(
-            text='',
-            color=(1, 0.35, 0.35, 1),
-            font_size='14sp',
-            size_hint_y=None, height=44,
-        )
-        self.add_widget(self.msg_label)
-        self.add_widget(Widget())
 
     def _submit(self, *_):
         api_id_text   = self.api_id_input.text.strip()
@@ -318,36 +342,42 @@ class LoadingScreen(BoxLayout):
     """Progress screen shown while the server is starting up."""
 
     def __init__(self, on_reset, **kwargs):
-        super().__init__(orientation='vertical', padding=[32, 40, 32, 24], spacing=12, **kwargs)
+        super().__init__(orientation='vertical',
+                         padding=[dp(24), dp(32), dp(24), dp(16)],
+                         spacing=dp(10), **kwargs)
         self._on_reset = on_reset
 
         # Latest status line shown in bold at the top
         self._status = Label(
             text='Starting\u2026',
-            font_size='16sp',
+            font_size='17sp',
             bold=True,
-            size_hint_y=None, height=36,
+            size_hint_y=None, height=dp(48),
             halign='center',
             color=(1, 1, 1, 1),
-            text_size=(Window.width - 64, None),
+            text_size=(Window.width - dp(48), None),
         )
         self.add_widget(self._status)
 
-        # Scrolling log of previous status lines
+        # Scrollable log of all status lines
+        self._scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
         self._log = Label(
             text='',
             font_size='12sp',
             halign='left',
             valign='top',
             color=(0.6, 0.85, 0.6, 1),
-            text_size=(Window.width - 64, None),
-            size_hint_y=1,
+            text_size=(Window.width - dp(48), None),
+            size_hint_y=None,
         )
-        self.add_widget(self._log)
+        # Let the label grow to fit its text content
+        self._log.bind(texture_size=self._log.setter('size'))
+        self._scroll.add_widget(self._log)
+        self.add_widget(self._scroll)
 
         self._reset_btn = Button(
             text='Reset Credentials & Try Again',
-            size_hint_y=None, height=56,
+            size_hint_y=None, height=dp(56),
             font_size='15sp',
             background_color=(0.75, 0.18, 0.18, 1),
             opacity=0,
@@ -357,10 +387,12 @@ class LoadingScreen(BoxLayout):
         self.add_widget(self._reset_btn)
 
     def update_status(self, msgs):
-        """Show newest message as the header; older ones in the log area."""
+        """Show newest message as the header; older ones in the scrollable log."""
         if msgs:
             self._status.text = msgs[-1]
             self._log.text    = '\n'.join(list(msgs)[:-1])
+            # Auto-scroll to bottom so newest log entries are visible
+            Clock.schedule_once(lambda dt: setattr(self._scroll, 'scroll_y', 0), 0.05)
 
     def set_text(self, text):
         self._status.text = text

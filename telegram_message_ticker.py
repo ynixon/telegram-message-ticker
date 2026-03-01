@@ -453,10 +453,12 @@ async def get_latest_messages_once(telegram_client, cfg):
                 logger.error("Channel ID missing for channel: %s", channel_name)
                 continue
 
+            _status(f'Fetching from {channel_name}…')
             entity = await telegram_client.get_entity(channel_id)
             messages = await telegram_client.get_messages(entity, limit=1)  # Fetch up to 1 message
             TOTAL_MESSAGES_FETCHED += len(messages)
             logger.info("Fetched %d message(s) from %s", len(messages), channel_name)
+            _status(f'Got {len(messages)} message(s) from {channel_name}')
 
             for message in messages:
                 logger.debug("Processing message ID %d from '%s'", message.id, channel_name)
@@ -848,7 +850,6 @@ async def run_telethon_client(cfg):
                 if INITIAL_FETCH_DONE:
                     setup_push_notifications(TELEGRAM_CLIENT)
                     _status('Ready! Listening for new messages.')
-                    global _telethon_ready
                     _telethon_ready = True
 
             except SessionPasswordNeededError:
