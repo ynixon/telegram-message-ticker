@@ -70,6 +70,39 @@ channel_message_counters = {}
 
 messages_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Kivy / Android integration callbacks (set by main.py at runtime)
+# ---------------------------------------------------------------------------
+_status_cb     = None   # callable(str)        – forward progress text to UI
+_needs_auth_cb = None   # callable(kind, phone) – ask UI to show auth screen
+
+_auth_code_event = threading.Event()
+_auth_code_value  = [None]
+_auth_2fa_event   = threading.Event()
+_auth_2fa_value   = [None]
+
+
+def _status(msg):
+    """Log a progress message and forward it to the UI callback if set."""
+    logger.info("[STATUS] %s", msg)
+    if _status_cb:
+        try:
+            _status_cb(msg)
+        except Exception:
+            pass
+
+
+def provide_auth_code(code):
+    """Called by the UI thread to supply the Telegram login code."""
+    _auth_code_value[0] = code
+    _auth_code_event.set()
+
+
+def provide_2fa_password(pw):
+    """Called by the UI thread to supply the 2FA password."""
+    _auth_2fa_value[0] = pw
+    _auth_2fa_event.set()
+
 
 def load_translations(language):
     """Load translation file for the specified language."""
@@ -755,26 +788,52 @@ async def run_telethon_client(cfg):
         while not STOP_EVENT_LOOP:
             try:
                 if not TELEGRAM_CLIENT.is_connected():
+                    _status('Connecting to Telegram\u2026')
                     await TELEGRAM_CLIENT.connect()
+                    _status('Connected. Checking authorisation\u2026')
 
                 if not await TELEGRAM_CLIENT.is_user_authorized():
+                    _status('Sending verification code to your phone\u2026')
                     await TELEGRAM_CLIENT.send_code_request(CONFIG["phone_number"])
-                    code = input(f"Enter the code for {CONFIG['phone_number']}: ")
+
+                    if _needs_auth_cb:
+                        _auth_code_event.clear()
+                        _auth_code_value[0] = None
+                        _needs_auth_cb('code', CONFIG.get('phone_number', ''))
+                        _status('Waiting for verification code\u2026')
+                        _auth_code_event.wait(timeout=300)
+                        code = _auth_code_value[0] or ''
+                    else:
+                        code = input(f"Enter the code for {CONFIG['phone_number']}: ")
+
+                    _status('Signing in\u2026')
                     await TELEGRAM_CLIENT.sign_in(CONFIG["phone_number"], code)
                     TELEGRAM_CLIENT.session.save()
+                    _status('Signed in successfully!')
 
+                _status('Fetching latest messages\u2026')
                 # Perform initial fetch of messages
                 await get_latest_messages_once(TELEGRAM_CLIENT, CONFIG)
 
                 # Set up notifications after initial fetch
                 if INITIAL_FETCH_DONE:
                     setup_push_notifications(TELEGRAM_CLIENT)
+                    _status('Ready! Listening for new messages.')
 
             except SessionPasswordNeededError:
-                password = input("Two-step verification enabled. Please enter your password: ")
+                if _needs_auth_cb:
+                    _auth_2fa_event.clear()
+                    _auth_2fa_value[0] = None
+                    _needs_auth_cb('2fa', CONFIG.get('phone_number', ''))
+                    _status('Waiting for 2FA password\u2026')
+                    _auth_2fa_event.wait(timeout=300)
+                    password = _auth_2fa_value[0] or ''
+                else:
+                    password = input("Two-step verification enabled. Please enter your password: ")
                 await TELEGRAM_CLIENT.sign_in(password=password)
             except Exception as client_error:
                 logger.error("Error in Telethon client: %s", client_error)
+                _status(f'Error: {client_error}')
                 await asyncio.sleep(10)
 
     except Exception as loop_error:
@@ -904,9 +963,14 @@ def main(args):
     # Load channels from the configuration file
     CHANNELS = load_channels(cfg["channel_list_file"])
 
-    # Set up signal handling for graceful shutdown
-    signal.signal(signal.SIGINT, shutdown_handler)
-    signal.signal(signal.SIGTERM, shutdown_handler)
+    # Set up signal handling for graceful shutdown.
+    # signal.signal() raises ValueError when called from a non-main thread
+    # (e.g. when launched from the Kivy Android entry point).
+    try:
+        signal.signal(signal.SIGINT, shutdown_handler)
+        signal.signal(signal.SIGTERM, shutdown_handler)
+    except (OSError, ValueError):
+        pass
 
     # Start Flask in a separate thread
     logger.info("Starting Flask thread...")

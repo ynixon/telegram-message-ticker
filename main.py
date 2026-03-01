@@ -2,9 +2,11 @@
 Telegram Message Ticker - Android Entry Point (Kivy)
 
 This module serves as the Android APK entry point. It:
-  1. Shows a setup screen if no credentials are saved
+  1. Shows a setup screen (pre-filled with saved credentials if available)
   2. Starts the Flask + Telethon backend in a background thread
-  3. Renders the web interface inside an Android WebView
+  3. Shows live progress messages while connecting
+  4. Handles Telegram auth-code / 2FA-password entry via a dedicated screen
+  5. Renders the web interface inside an Android WebView
 
 For desktop use, run telegram_message_ticker.py directly.
 """
@@ -14,6 +16,7 @@ import sys
 import json
 import threading
 import logging
+import collections
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -31,6 +34,17 @@ logging.basicConfig(level=logging.INFO)
 SERVER_PORT = 3005
 _server_error = None
 
+# Thread-safe progress message queue (newest last, shown in loading screen)
+_status_msgs = collections.deque(maxlen=12)
+_status_lock = threading.Lock()
+
+
+def _on_status(msg):
+    """Receives live progress messages from the background server thread."""
+    logger.info("[STATUS] %s", msg)
+    with _status_lock:
+        _status_msgs.append(msg)
+
 
 # ---------------------------------------------------------------------------
 # Storage helpers
@@ -39,7 +53,7 @@ _server_error = None
 def get_app_storage():
     """Return a writable directory for app data."""
     if platform == 'android':
-        from android.storage import app_storage_path  # noqa: pylint: disable=import-error
+        from android.storage import app_storage_path  # noqa
         return app_storage_path()
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -80,8 +94,6 @@ def run_server(cfg):
     """Start Flask + Telethon in the current thread (called from daemon thread)."""
     global _server_error
     try:
-        # Work from the directory that contains this file so that templates/
-        # static/ can be found by Flask.
         app_dir = os.path.dirname(os.path.abspath(__file__))
         os.chdir(app_dir)
 
@@ -90,7 +102,6 @@ def run_server(cfg):
 
         channels_file = os.path.join(get_app_storage(), 'channels.json')
         if not os.path.exists(channels_file):
-            # Copy the example file or create an empty one
             example = os.path.join(app_dir, 'channels.json.example')
             if os.path.exists(example):
                 import shutil
@@ -123,9 +134,9 @@ def run_server(cfg):
 # ---------------------------------------------------------------------------
 
 class SetupScreen(BoxLayout):
-    """First-run screen asking for Telegram API credentials."""
+    """Credential entry screen.  Pre-fills fields from saved_cfg when provided."""
 
-    def __init__(self, on_start, **kwargs):
+    def __init__(self, on_start, saved_cfg=None, **kwargs):
         super().__init__(
             orientation='vertical',
             padding=[30, 40, 30, 24],
@@ -141,7 +152,7 @@ class SetupScreen(BoxLayout):
             size_hint_y=None, height=56,
         ))
         self.add_widget(Label(
-            text='Get your credentials at my.telegram.org → API development tools',
+            text='Get your credentials at my.telegram.org \u2192 API development tools',
             font_size='13sp',
             color=(0.75, 0.75, 0.75, 1),
             size_hint_y=None, height=44,
@@ -149,7 +160,6 @@ class SetupScreen(BoxLayout):
             text_size=(Window.width - 60, None),
         ))
 
-        # Helper: labelled input field
         def _field(label_text, hint, **kw):
             box = BoxLayout(orientation='vertical', size_hint_y=None, height=88, spacing=4)
             box.add_widget(Label(
@@ -175,12 +185,18 @@ class SetupScreen(BoxLayout):
             box.add_widget(inp)
             return box, inp
 
-        id_box, self.api_id_input = _field('API ID', 'e.g. 5390776', input_filter='int')
-        hash_box, self.api_hash_input = _field('API Hash', 'e.g. 2df8c2493f52845f2045f035499e837b')
-        phone_box, self.phone_input = _field('Phone number', 'e.g. +12223334444')
+        id_box,   self.api_id_input   = _field('API ID',       'e.g. 5390776',                       input_filter='int')
+        hash_box, self.api_hash_input = _field('API Hash',     'e.g. 2df8c2493f52845f2045f035499e837b')
+        phone_box, self.phone_input   = _field('Phone number', 'e.g. +12223334444')
 
         for box in (id_box, hash_box, phone_box):
             self.add_widget(box)
+
+        # Pre-fill from saved config so the user can review / edit before starting
+        if saved_cfg:
+            self.api_id_input.text   = str(saved_cfg.get('api_id',       ''))
+            self.api_hash_input.text = str(saved_cfg.get('api_hash',     ''))
+            self.phone_input.text    = str(saved_cfg.get('phone_number', ''))
 
         start_btn = Button(
             text='Start',
@@ -198,12 +214,10 @@ class SetupScreen(BoxLayout):
             size_hint_y=None, height=44,
         )
         self.add_widget(self.msg_label)
-
-        # Spacer
         self.add_widget(Widget())
 
     def _submit(self, *_):
-        api_id_text = self.api_id_input.text.strip()
+        api_id_text   = self.api_id_input.text.strip()
         api_hash_text = self.api_hash_input.text.strip()
 
         if not api_id_text or not api_hash_text:
@@ -211,34 +225,115 @@ class SetupScreen(BoxLayout):
             return
 
         cfg = {
-            'api_id': int(api_id_text),
-            'api_hash': api_hash_text,
-            'phone_number': self.phone_input.text.strip(),
-            'port': SERVER_PORT,
-            'media_folder': 'media',
+            'api_id':            int(api_id_text),
+            'api_hash':          api_hash_text,
+            'phone_number':      self.phone_input.text.strip(),
+            'port':              SERVER_PORT,
+            'media_folder':      'media',
             'channel_list_file': os.path.join(get_app_storage(), 'channels.json'),
             'message_age_limit': 2,
-            'default_language': 'en',
-            'secret_key': os.urandom(16).hex(),
+            'default_language':  'en',
+            'secret_key':        os.urandom(16).hex(),
         }
         save_config(cfg)
         self.on_start_cb(cfg)
 
 
+class AuthScreen(BoxLayout):
+    """Telegram verification-code or 2FA-password entry screen."""
+
+    def __init__(self, kind, phone, on_submit, **kwargs):
+        super().__init__(orientation='vertical', padding=[30, 50, 30, 24], spacing=20, **kwargs)
+
+        if kind == 'code':
+            title   = 'Verification Code'
+            desc    = f'A login code was sent to {phone or "your phone"}.\nEnter it below:'
+            hint    = '12345'
+            is_pw   = False
+        else:
+            title   = 'Two-Step Verification'
+            desc    = 'Your account has 2FA enabled.\nEnter your Telegram password:'
+            hint    = 'Password'
+            is_pw   = True
+
+        self.add_widget(Label(
+            text=f'[b]{title}[/b]',
+            markup=True,
+            font_size='22sp',
+            size_hint_y=None, height=52,
+        ))
+        self.add_widget(Label(
+            text=desc,
+            font_size='14sp',
+            color=(0.8, 0.8, 0.8, 1),
+            halign='center',
+            text_size=(Window.width - 60, None),
+            size_hint_y=None, height=64,
+        ))
+
+        self._inp = TextInput(
+            hint_text=hint,
+            hint_text_color=(0.45, 0.45, 0.45, 1),
+            foreground_color=(0, 0, 0, 1),
+            background_color=(1, 1, 1, 1),
+            cursor_color=(0.1, 0.1, 0.1, 1),
+            password=is_pw,
+            multiline=False,
+            font_size='22sp',
+            size_hint_y=None, height=64,
+            padding=[12, 16, 12, 16],
+        )
+        self.add_widget(self._inp)
+
+        btn = Button(
+            text='Confirm',
+            size_hint_y=None, height=58,
+            font_size='17sp',
+            background_color=(0.18, 0.55, 0.88, 1),
+        )
+        btn.bind(on_press=lambda *_: on_submit(self._inp.text.strip()))
+        self.add_widget(btn)
+
+        self._err = Label(
+            text='',
+            color=(1, 0.35, 0.35, 1),
+            font_size='13sp',
+            size_hint_y=None, height=36,
+        )
+        self.add_widget(self._err)
+        self.add_widget(Widget())
+
+
 class LoadingScreen(BoxLayout):
-    """Shown while the server is starting up."""
+    """Progress screen shown while the server is starting up."""
 
     def __init__(self, on_reset, **kwargs):
-        super().__init__(orientation='vertical', padding=32, spacing=24, **kwargs)
+        super().__init__(orientation='vertical', padding=[32, 40, 32, 24], spacing=12, **kwargs)
         self._on_reset = on_reset
 
-        self._label = Label(
-            text='Starting server\u2026',
-            font_size='17sp',
+        # Latest status line shown in bold at the top
+        self._status = Label(
+            text='Starting\u2026',
+            font_size='16sp',
+            bold=True,
+            size_hint_y=None, height=36,
             halign='center',
+            color=(1, 1, 1, 1),
             text_size=(Window.width - 64, None),
         )
-        self.add_widget(self._label)
+        self.add_widget(self._status)
+
+        # Scrolling log of previous status lines
+        self._log = Label(
+            text='',
+            font_size='12sp',
+            halign='left',
+            valign='top',
+            color=(0.6, 0.85, 0.6, 1),
+            text_size=(Window.width - 64, None),
+            size_hint_y=1,
+        )
+        self.add_widget(self._log)
 
         self._reset_btn = Button(
             text='Reset Credentials & Try Again',
@@ -251,11 +346,17 @@ class LoadingScreen(BoxLayout):
         self._reset_btn.bind(on_press=lambda *_: self._on_reset())
         self.add_widget(self._reset_btn)
 
+    def update_status(self, msgs):
+        """Show newest message as the header; older ones in the log area."""
+        if msgs:
+            self._status.text = msgs[-1]
+            self._log.text    = '\n'.join(list(msgs)[:-1])
+
     def set_text(self, text):
-        self._label.text = text
+        self._status.text = text
 
     def show_reset_button(self):
-        self._reset_btn.opacity = 1
+        self._reset_btn.opacity  = 1
         self._reset_btn.disabled = False
 
 
@@ -269,81 +370,108 @@ class TelegramTickerApp(App):
     def build(self):
         Window.clearcolor = (0.07, 0.07, 0.07, 1)
         self._container = BoxLayout()
-
+        # Always show the setup screen; pre-fill with any saved credentials
+        # so returning users can review and just tap Start.
         cfg = load_saved_config()
-        if cfg.get('api_id') and cfg.get('api_hash'):
-            self._begin_server(cfg)
-        else:
-            self._container.add_widget(SetupScreen(on_start=self._begin_server))
-
+        self._container.add_widget(
+            SetupScreen(on_start=self._begin_server, saved_cfg=cfg)
+        )
         return self._container
 
     # ------------------------------------------------------------------
     def _begin_server(self, cfg):
-        """Replace whatever is on screen with a loading screen and
-        launch the backend server thread."""
         global _server_error
         _server_error = None
+        with _status_lock:
+            _status_msgs.clear()
+
+        # Wire progress and auth callbacks into the backend module
+        import telegram_message_ticker as _tmt
+        _tmt._status_cb     = _on_status
+        _tmt._needs_auth_cb = self._show_auth_screen
 
         self._container.clear_widgets()
         self._loading = LoadingScreen(on_reset=self._reset)
         self._container.add_widget(self._loading)
 
-        threading.Thread(
-            target=run_server,
-            args=(cfg,),
-            daemon=True,
-        ).start()
-
+        threading.Thread(target=run_server, args=(cfg,), daemon=True).start()
         Clock.schedule_interval(self._poll_server, 1.0)
 
     # ------------------------------------------------------------------
+    def _show_auth_screen(self, kind, phone):
+        """Called from the background thread; switches to auth UI on the main thread."""
+        def _do(dt):
+            from telegram_message_ticker import provide_auth_code, provide_2fa_password
+            provide = provide_auth_code if kind == 'code' else provide_2fa_password
+
+            def _submit(value):
+                if not value:
+                    return
+                # Return to loading screen and resume polling
+                self._container.clear_widgets()
+                self._loading = LoadingScreen(on_reset=self._reset)
+                self._container.add_widget(self._loading)
+                Clock.schedule_interval(self._poll_server, 1.0)
+                provide(value)
+
+            self._container.clear_widgets()
+            self._container.add_widget(
+                AuthScreen(kind=kind, phone=phone, on_submit=_submit)
+            )
+        Clock.schedule_once(_do, 0)
+
+    # ------------------------------------------------------------------
     def _reset(self):
-        """Clear saved credentials and return to the setup screen."""
         global _server_error
         _server_error = None
+        with _status_lock:
+            _status_msgs.clear()
         try:
             os.remove(get_config_path())
         except OSError:
             pass
         self._container.clear_widgets()
-        self._container.add_widget(SetupScreen(on_start=self._begin_server))
+        self._container.add_widget(
+            SetupScreen(on_start=self._begin_server, saved_cfg={})
+        )
 
     # ------------------------------------------------------------------
     def _poll_server(self, dt):
-        """Check whether the Flask server is accepting connections yet."""
+        """Drains status queue, checks for errors, and detects when Flask is up."""
+        # Update loading screen with latest progress messages
+        with _status_lock:
+            msgs = list(_status_msgs)
+        if msgs and hasattr(self, '_loading') and self._loading.parent:
+            self._loading.update_status(msgs)
+
         if _server_error:
-            self._loading.set_text(
-                f'Error:\n{_server_error}\n\nTap the button below to fix your credentials.'
-            )
-            self._loading.show_reset_button()
+            if hasattr(self, '_loading') and self._loading.parent:
+                self._loading.set_text(f'Error: {_server_error}')
+                self._loading.show_reset_button()
             return False  # stop polling
 
         import socket
         try:
             sock = socket.create_connection(('127.0.0.1', SERVER_PORT), timeout=0.5)
             sock.close()
-            # Server is up - open the WebView after a short delay
             Clock.schedule_once(lambda _dt: self._open_webview(), 0.8)
             return False  # stop polling
         except OSError:
-            self._loading.set_text('Connecting to Telegram\u2026')
+            pass
 
     # ------------------------------------------------------------------
     def _open_webview(self):
-        """Replace the Kivy UI with an Android WebView (Android only).
-        On desktop, simply display the server URL."""
         url = f'http://localhost:{SERVER_PORT}'
 
         if platform == 'android':
-            from android.runnable import run_on_ui_thread  # noqa: pylint: disable=import-error
+            from android.runnable import run_on_ui_thread  # noqa
 
             @run_on_ui_thread
             def _show():
-                from jnius import autoclass  # noqa: pylint: disable=import-error
+                from jnius import autoclass  # noqa
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                WebView = autoclass('android.webkit.WebView')
-                WebViewClient = autoclass('android.webkit.WebViewClient')
+                WebView        = autoclass('android.webkit.WebView')
+                WebViewClient  = autoclass('android.webkit.WebViewClient')
 
                 activity = PythonActivity.mActivity
                 wv = WebView(activity)
@@ -356,16 +484,12 @@ class TelegramTickerApp(App):
                 settings.setAllowContentAccess(True)
 
                 wv.setWebViewClient(WebViewClient())
-
-                # Replace the whole content view with the WebView so it
-                # fills the entire screen (Kivy canvas is hidden behind it).
                 activity.setContentView(wv)
                 wv.loadUrl(url)
 
             _show()
 
         else:
-            # Desktop fallback
             self._loading.set_text(
                 f'Server is running!\n\nOpen your browser at:\n{url}'
             )
