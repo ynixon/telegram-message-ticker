@@ -278,6 +278,19 @@ jobs:
           echo "--- Last 300 lines ---"
           tail -300 /tmp/gradle-out.txt
 
+          # Emit key error lines as ::error:: workflow commands so they appear
+          # as check-run annotations (queryable via the GitHub REST API even
+          # when the full log is inaccessible due to blob storage restrictions).
+          echo ""
+          echo "=== GitHub Annotations (key errors) ==="
+          grep -E "^(FAILURE|> Task|e: |error:|Could not |Caused by:|Exception)" \
+            /tmp/gradle-out.txt 2>/dev/null | head -40 | \
+            while IFS= read -r line; do
+              # Sanitise: GitHub annotation text must not contain raw newlines
+              clean=$(echo "$line" | tr '\n' ' ' | sed 's/[%]/%25/g')
+              echo "::error::${clean}"
+            done || true
+
       # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful
       # ------------------------------------------------------------------ #
