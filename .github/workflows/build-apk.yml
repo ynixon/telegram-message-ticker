@@ -213,6 +213,28 @@ jobs:
           echo "Patched $COUNT file(s).  (0 is OK on a cold cache.)"
 
       # ------------------------------------------------------------------ #
+      # 6d. Global Gradle init script: redirect jcenter → mavenCentral
+      #
+      #     JCenter shut down February 2022; Gradle hangs/fails when it
+      #     tries to fetch from jcenter.bintray.com.  The pre-build file
+      #     patch (step 6c) only works on a warm cache where p4a has
+      #     already been downloaded.  On a cold cache, p4a is downloaded
+      #     INSIDE `buildozer android debug`, so its Gradle templates
+      #     haven't been patched yet when Gradle first runs.
+      #
+      #     A Gradle init script in ~/.gradle/init.d/ applies to EVERY
+      #     Gradle invocation, including the one p4a makes during the
+      #     build, without needing to know p4a's file paths in advance.
+      # ------------------------------------------------------------------ #
+      - name: Install Gradle init script (jcenter → mavenCentral)
+        run: |
+          mkdir -p "$HOME/.gradle/init.d"
+          cp .github/scripts/jcenter-to-central.gradle \
+             "$HOME/.gradle/init.d/jcenter-to-central.gradle"
+          echo "Installed Gradle init script:"
+          cat "$HOME/.gradle/init.d/jcenter-to-central.gradle"
+
+      # ------------------------------------------------------------------ #
       # 7. Build debug APK
       #
       #    NOTE: Do NOT set JAVA_TOOL_OPTIONS here.  That variable is
@@ -267,6 +289,22 @@ jobs:
             cat "$f"
           done
 
+          # Patch any remaining jcenter() references in p4a's generated files.
+          # (The Gradle init script redirects jcenter at runtime, but patching
+          #  source files also ensures settings.gradle / pluginManagement blocks
+          #  are covered, since init scripts run after settings evaluation.)
+          echo ""
+          echo "=== Patching jcenter → mavenCentral in generated Gradle files ==="
+          COUNT=0
+          while IFS= read -r f; do
+            echo "  Patching: $f"
+            sed -i 's/jcenter()/mavenCentral()/g' "$f"
+            COUNT=$((COUNT + 1))
+          done < <(grep -rl "jcenter()" "$HOME/.buildozer" .buildozer \
+                     --include="*.tmpl" --include="*.gradle" \
+                     2>/dev/null || true)
+          echo "Patched $COUNT file(s)."
+
           echo ""
           echo "=== gradlew clean assembleDebug --stacktrace ==="
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -300,28 +338,22 @@ jobs:
             done || true
 
           # 2. The "What went wrong" block (the real error message)
-          python3 - /tmp/gradle-out.txt << 'PYEOF'
-import sys
-lines = open(sys.argv[1]).readlines()
-# Locate "* What went wrong:" and emit next 25 lines as annotations
-for i, l in enumerate(lines):
-    if '* What went wrong:' in l:
-        for j in range(i, min(len(lines), i + 25)):
-            msg = lines[j].rstrip()
-            if msg:
-                msg = msg.replace('%', '%25')
-                print(f'::error::{msg}')
-        sys.exit(0)
-# Fallback: emit the last occurrence of "Caused by:"
-for i in range(len(lines) - 1, -1, -1):
-    if 'Caused by:' in lines[i]:
-        for j in range(max(0, i - 2), min(len(lines), i + 10)):
-            msg = lines[j].rstrip()
-            if msg:
-                print(f'::error::{msg}')
-        sys.exit(0)
-print('::error::Could not locate "What went wrong" or "Caused by:" in Gradle output')
-PYEOF
+          #    Use awk (not a Python heredoc) to stay valid YAML.
+          if grep -q "\* What went wrong:" /tmp/gradle-out.txt; then
+            awk '/\* What went wrong:/{p=1;c=0;next} p{gsub(/%/,"%25"); if(NF) printf "::error::%s\n",$0; if(++c>=25) exit}' \
+              /tmp/gradle-out.txt
+          else
+            LAST_CAUSED=$(grep -n "Caused by:" /tmp/gradle-out.txt | tail -1 | cut -d: -f1)
+            if [ -n "$LAST_CAUSED" ]; then
+              START=$(( LAST_CAUSED > 2 ? LAST_CAUSED - 2 : 1 ))
+              END=$(( LAST_CAUSED + 10 ))
+              sed -n "${START},${END}p" /tmp/gradle-out.txt | while IFS= read -r msg; do
+                [ -n "$msg" ] && printf '::error::%s\n' "$msg"
+              done
+            else
+              echo "::error::Could not locate 'What went wrong' or 'Caused by:' in Gradle output"
+            fi
+          fi
 
       # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful

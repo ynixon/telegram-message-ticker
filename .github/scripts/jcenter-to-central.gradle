@@ -1,0 +1,24 @@
+// Gradle init script: redirect jcenter -> mavenCentral globally.
+// JCenter shut down February 2022; any Gradle invocation that references
+// jcenter() will hang or fail.  This init script applies to ALL Gradle
+// projects (including p4a-generated ones) without needing to patch files.
+allprojects {
+    buildscript {
+        repositories.all { repo ->
+            if (repo instanceof MavenArtifactRepository) {
+                if (repo.url.toString().contains('jcenter.bintray.com')) {
+                    logger.warn("jcenter-to-central.gradle: redirecting jcenter -> mavenCentral for ${repo.url}")
+                    repo.url = uri('https://repo1.maven.org/maven2')
+                }
+            }
+        }
+    }
+    repositories.all { repo ->
+        if (repo instanceof MavenArtifactRepository) {
+            if (repo.url.toString().contains('jcenter.bintray.com')) {
+                logger.warn("jcenter-to-central.gradle: redirecting jcenter -> mavenCentral for ${repo.url}")
+                repo.url = uri('https://repo1.maven.org/maven2')
+            }
+        }
+    }
+}
