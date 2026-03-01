@@ -290,38 +290,44 @@ jobs:
           # Emit the actual failure reason as ::error:: annotations.
           # These are accessible via the GitHub REST API check-runs endpoint
           # even when the full log blob is unreachable.
+          # NOTE: Do NOT use shell heredoc (<<'EOF') inside a YAML run: block.
+          #   Lines at column-0 inside the heredoc are parsed as outside the
+          #   YAML literal block, causing "could not find expected ':'" errors.
+          #   Use awk/grep instead.
           echo ""
           echo "=== GitHub Annotations (failure reason) ==="
 
-          # 1. Which task failed?
+          # 1. Which task FAILED?
           grep -E "FAILED$" /tmp/gradle-out.txt 2>/dev/null | head -5 | \
             while IFS= read -r line; do
               echo "::error::FAILED TASK: $(echo "$line" | sed 's/[%]/%25/g')"
             done || true
 
-          # 2. The "What went wrong" block (the real error message)
-          python3 - /tmp/gradle-out.txt << 'PYEOF'
-import sys
-lines = open(sys.argv[1]).readlines()
-# Locate "* What went wrong:" and emit next 25 lines as annotations
-for i, l in enumerate(lines):
-    if '* What went wrong:' in l:
-        for j in range(i, min(len(lines), i + 25)):
-            msg = lines[j].rstrip()
-            if msg:
-                msg = msg.replace('%', '%25')
-                print(f'::error::{msg}')
-        sys.exit(0)
-# Fallback: emit the last occurrence of "Caused by:"
-for i in range(len(lines) - 1, -1, -1):
-    if 'Caused by:' in lines[i]:
-        for j in range(max(0, i - 2), min(len(lines), i + 10)):
-            msg = lines[j].rstrip()
-            if msg:
-                print(f'::error::{msg}')
-        sys.exit(0)
-print('::error::Could not locate "What went wrong" or "Caused by:" in Gradle output')
-PYEOF
+          # 2. Extract the "* What went wrong:" block (up to 25 lines).
+          #    Falls back to the last "Caused by:" block if not found.
+          awk '
+            /^\* What went wrong:/ { found=1; count=0 }
+            /^\* Try:/             { if (found) found=0 }
+            found && count < 25 {
+              msg = $0
+              gsub(/%/, "%25", msg)
+              print "::error::" msg
+              count++
+            }
+          ' /tmp/gradle-out.txt 2>/dev/null | grep -v "^$" || \
+          awk '
+            /Caused by:/ { found=1; buf=""; count=0 }
+            found && count < 10 { buf = buf "\n" $0; count++ }
+            found && count >= 10 { found=0 }
+            END {
+              n = split(buf, lines, "\n")
+              for (i=1; i<=n; i++) {
+                msg = lines[i]
+                gsub(/%/, "%25", msg)
+                if (msg) print "::error::" msg
+              }
+            }
+          ' /tmp/gradle-out.txt 2>/dev/null || true
 
       # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful
