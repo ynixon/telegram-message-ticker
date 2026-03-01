@@ -122,7 +122,37 @@ jobs:
           echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------ #
-      # 6. Bundle libc++_shared.so for greenlet
+      # 6a. Stable debug keystore
+      #
+      #     Android refuses to update an APK if the signing certificate
+      #     changes between builds.  We cache the debug keystore under a
+      #     *fixed* cache key so it survives across buildozer.spec bumps.
+      #     On the very first run (cache miss) keytool generates a new
+      #     keystore; every subsequent run reuses the same one.
+      # ------------------------------------------------------------------ #
+      - name: Restore debug keystore cache
+        id: keystore-cache
+        uses: actions/cache@v4
+        with:
+          path: debug.keystore
+          key: android-debug-keystore-stable-v1
+
+      - name: Generate debug keystore (first run only)
+        if: steps.keystore-cache.outputs.cache-hit != 'true'
+        run: |
+          keytool -genkey -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          echo "Generated new debug keystore."
+
+      # ------------------------------------------------------------------ #
+      # 6b. Bundle libc++_shared.so for greenlet
       #
       #    greenlet 2.x is a C++ extension; the NDK compiles it against
       #    libc++_shared.so (the shared C++ STL).  Android does NOT ship

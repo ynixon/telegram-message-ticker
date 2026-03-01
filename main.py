@@ -124,9 +124,11 @@ def run_server(cfg):
         from telegram_message_ticker import main as ticker_main
         ticker_main(args)
 
-    except Exception as exc:
+    except BaseException as exc:
+        # Catch SystemExit (raised by sys.exit()) as well as ordinary exceptions
+        # so the loading screen always shows the error instead of silently dying.
         logger.error("Server error: %s", exc, exc_info=True)
-        _server_error = str(exc)
+        _server_error = str(exc) if str(exc) else type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -160,13 +162,17 @@ class SetupScreen(BoxLayout):
             text_size=(Window.width - 60, None),
         ))
 
-        def _field(label_text, hint, **kw):
-            box = BoxLayout(orientation='vertical', size_hint_y=None, height=88, spacing=4)
+        def _field(label_text, hint, multiline=False, **kw):
+            # Two-line hash fields are taller; single-line fields slightly shorter
+            inp_height = 96 if multiline else 64
+            box_height = 32 + inp_height  # label(28) + spacing(4) + input
+            box = BoxLayout(orientation='vertical', size_hint_y=None,
+                            height=box_height, spacing=4)
             box.add_widget(Label(
                 text=label_text,
                 font_size='14sp',
                 color=(0.9, 0.9, 0.9, 1),
-                size_hint_y=None, height=26,
+                size_hint_y=None, height=28,
                 halign='left',
                 text_size=(Window.width - 60, None),
             ))
@@ -176,18 +182,22 @@ class SetupScreen(BoxLayout):
                 foreground_color=(0, 0, 0, 1),
                 background_color=(1, 1, 1, 1),
                 cursor_color=(0.1, 0.1, 0.1, 1),
-                multiline=False,
-                font_size='16sp',
-                padding=[12, 14, 12, 14],
-                size_hint_y=None, height=58,
+                multiline=multiline,
+                font_size='15sp',
+                padding=[12, 12, 12, 12],
+                size_hint_y=None, height=inp_height,
                 **kw
             )
             box.add_widget(inp)
             return box, inp
 
-        id_box,   self.api_id_input   = _field('API ID',       'e.g. 5390776',                       input_filter='int')
-        hash_box, self.api_hash_input = _field('API Hash',     'e.g. 2df8c2493f52845f2045f035499e837b')
-        phone_box, self.phone_input   = _field('Phone number', 'e.g. +12223334444')
+        id_box,    self.api_id_input   = _field('API ID',       'e.g. 5390776',
+                                                 input_filter='int')
+        # API hash is 32 chars — use multiline so the full value is always visible
+        hash_box,  self.api_hash_input = _field('API Hash',
+                                                 'e.g. 2df8c2493f52845f2045f035499e837b',
+                                                 multiline=True)
+        phone_box, self.phone_input    = _field('Phone number', 'e.g. +12223334444')
 
         for box in (id_box, hash_box, phone_box):
             self.add_widget(box)
@@ -370,6 +380,7 @@ class TelegramTickerApp(App):
     def build(self):
         Window.clearcolor = (0.07, 0.07, 0.07, 1)
         self._container = BoxLayout()
+        self._poll_event = None  # track active Clock interval to avoid duplicates
         # Always show the setup screen; pre-fill with any saved credentials
         # so returning users can review and just tap Start.
         cfg = load_saved_config()
@@ -377,6 +388,12 @@ class TelegramTickerApp(App):
             SetupScreen(on_start=self._begin_server, saved_cfg=cfg)
         )
         return self._container
+
+    def _start_polling(self):
+        """Start (or restart) the 1-second server-status polling loop."""
+        if self._poll_event:
+            self._poll_event.cancel()
+        self._poll_event = Clock.schedule_interval(self._poll_server, 1.0)
 
     # ------------------------------------------------------------------
     def _begin_server(self, cfg):
@@ -395,7 +412,7 @@ class TelegramTickerApp(App):
         self._container.add_widget(self._loading)
 
         threading.Thread(target=run_server, args=(cfg,), daemon=True).start()
-        Clock.schedule_interval(self._poll_server, 1.0)
+        self._start_polling()
 
     # ------------------------------------------------------------------
     def _show_auth_screen(self, kind, phone):
@@ -407,11 +424,11 @@ class TelegramTickerApp(App):
             def _submit(value):
                 if not value:
                     return
-                # Return to loading screen and resume polling
+                # Return to loading screen and resume polling (cancel old interval first)
                 self._container.clear_widgets()
                 self._loading = LoadingScreen(on_reset=self._reset)
                 self._container.add_widget(self._loading)
-                Clock.schedule_interval(self._poll_server, 1.0)
+                self._start_polling()
                 provide(value)
 
             self._container.clear_widgets()
@@ -424,6 +441,9 @@ class TelegramTickerApp(App):
     def _reset(self):
         global _server_error
         _server_error = None
+        if self._poll_event:
+            self._poll_event.cancel()
+            self._poll_event = None
         with _status_lock:
             _status_msgs.clear()
         try:
@@ -448,16 +468,28 @@ class TelegramTickerApp(App):
             if hasattr(self, '_loading') and self._loading.parent:
                 self._loading.set_text(f'Error: {_server_error}')
                 self._loading.show_reset_button()
+            self._poll_event = None
             return False  # stop polling
 
         import socket
         try:
             sock = socket.create_connection(('127.0.0.1', SERVER_PORT), timeout=0.5)
             sock.close()
-            Clock.schedule_once(lambda _dt: self._open_webview(), 0.8)
-            return False  # stop polling
         except OSError:
-            pass
+            return  # Flask not up yet – keep polling
+
+        # Flask is up; also wait until Telethon is fully connected before
+        # opening the WebView, so the ticker is ready when the UI appears.
+        try:
+            import telegram_message_ticker as _tmt
+            if not _tmt._telethon_ready:
+                return  # still authenticating – keep polling
+        except Exception:
+            return
+
+        self._poll_event = None
+        Clock.schedule_once(lambda _dt: self._open_webview(), 0.5)
+        return False  # stop polling
 
     # ------------------------------------------------------------------
     def _open_webview(self):

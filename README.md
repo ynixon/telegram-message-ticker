@@ -1,35 +1,34 @@
 # Telegram Message Ticker
 
-This project is a web application that fetches the latest messages from specified Telegram channels using the Telethon library and displays them in a ticker format. It serves as a simple interface to monitor messages, including media such as photos.
+A web application that fetches the latest messages from Telegram channels using Telethon and displays them in a real-time ticker format. Runs on **desktop** (direct Python) and on **Android** as a native APK (Kivy + WebView).
 
 ## Features
 
-- Fetches and displays messages from Telegram channels.
-- Supports displaying text, photos, and videos.
-- Automatically updates the ticker every few seconds.
-- Allows manual or remote refresh of the message feed.
-- Deletes old media files after a specified period.
-- **Language support** for switching between different languages dynamically.
+- Fetches and displays messages from Telegram channels in real time.
+- Supports text, photos, and videos.
+- Automatically pushes new messages via Socket.IO (no manual refresh needed).
+- Allows remote refresh of the message feed via a POST endpoint.
+- Deletes old media files automatically after a configurable period.
+- **Android APK** — credential entry screen, live progress display, auth-code / 2FA screens, and an embedded WebView ticker.
+- **Language support** — switch between English and Hebrew dynamically.
+- **CI/CD** — GitHub Actions builds a debug APK on every push; APK is uploaded as a workflow artifact and published to GitHub Releases on version tags.
 
 ## Prerequisites
 
-- Python 3.7 or higher
-- Flask
-- Telethon
-- jQuery
+- Python 3.10 or higher (3.11 recommended)
+- Flask + Telethon (see `requirements.txt`)
+- For Android builds: Buildozer 1.5, Android SDK API 33, NDK 25b
 
-## Setup Instructions
+## Setup Instructions (Desktop)
 
 1. **Clone the repository:**
 
    ```bash
    git clone <repository-url>
-   cd <repository-folder>
+   cd telegram-message-ticker
    ```
 
 2. **Install the required packages:**
-
-   You can use `pip` to install the required libraries. Make sure you have `requirements.txt` in your project directory.
 
    ```bash
    pip install -r requirements.txt
@@ -37,56 +36,86 @@ This project is a web application that fetches the latest messages from specifie
 
 3. **Create a configuration file:**
 
-   Create a `config.json` file in the project root with the following structure:
+   Copy the example and fill in your credentials (get them at <https://my.telegram.org> → *API development tools*):
+
+   ```bash
+   cp config.json.example config.json
+   ```
 
    ```json
    {
-     "api_id": <Your_Telegram_API_ID>,
-     "api_hash": "<Your_Telegram_API_Hash>",
+     "api_id": 123456,
+     "api_hash": "your32charhashhere",
      "port": 3005,
      "media_folder": "media",
      "channel_list_file": "channels.json",
      "message_age_limit": 2,
      "default_language": "en",
-     "secret_key": "<Your_Secret_Key>"
+     "secret_key": "change-me-to-a-random-string"
    }
    ```
 
-   - Replace `<Your_Telegram_API_ID>` and `<Your_Telegram_API_Hash>` with your actual Telegram API credentials.
-   - Set the `message_age_limit` to specify the maximum age of messages to fetch, in hours.
-   - The `secret_key` is a crucial component for Flask, which is used for securely signing the session cookie. It should be a long, random string. You can generate one using Python:
+   Generate a random `secret_key`:
+   ```python
+   python -c "import os; print(os.urandom(24).hex())"
+   ```
 
-     ```python
-     import os
-     print(os.urandom(24).hex())
-     ```
+4. **Create a channels file:**
 
-     Use the output as the value for `secret_key` in the `config.json`.
+   ```bash
+   cp channels.json.example channels.json
+   ```
 
-4. **Create a channels JSON file:**
-
-   Create a `channels.json` file with the following structure:
+   Edit `channels.json` and add the Telegram channel IDs you want to monitor:
 
    ```json
    {
      "channels": [
-       {"id": "channel_id_1", "name": "Channel Name 1"},
-       {"id": "channel_id_2", "name": "Channel Name 2"}
+       {"id": "channel_username_or_id", "name": "My Channel"}
      ]
    }
    ```
 
-   Replace `"channel_id_1"` and `"channel_id_2"` with the actual channel IDs you want to monitor. You can list channels using the `--list-channels` command-line argument after providing valid API credentials.
+   Tip: use `--list-channels` to discover channel IDs once you are logged in.
 
 5. **Run the application:**
-
-   Start the application by executing:
 
    ```bash
    python telegram_message_ticker.py
    ```
 
-   The application will start running on `http://127.0.0.1:3005` by default. You can also specify the port using command-line arguments or the configuration file.
+   Open `http://127.0.0.1:3005` in a browser. On first run Telethon will send a login code to your phone; enter it when prompted.
+
+## Android APK
+
+The app can be installed as a native Android APK. A pre-built debug APK is produced automatically by GitHub Actions on every push and is available as a workflow artifact (and as a GitHub Release on version tags).
+
+### Installing / Updating the APK
+
+1. Download `telegram-message-ticker-debug.apk` from the *Actions* tab (latest workflow run → *Artifacts*) or from the *Releases* page.
+2. On your Android device enable *Install from unknown sources* for your browser or file manager.
+3. Open the downloaded APK and tap **Install**.
+
+> **Update note:** all CI-built APKs are signed with the same stable debug keystore (cached between runs). You can install new versions as updates without uninstalling first, as long as you use APKs produced by the same repository's CI.
+
+### First-time setup on Android
+
+1. Launch the app. The setup screen appears.
+2. Enter your **API ID**, **API Hash**, and **Phone number** (with country code, e.g. `+12223334444`). Get credentials at <https://my.telegram.org>.
+3. Tap **Start**. A live progress log shows connection status.
+4. If your account has not been used from this device, Telegram sends a login code to your phone/Telegram app. Enter it on the verification screen.
+5. If 2FA is enabled enter your Telegram password when prompted.
+6. Once connected the app switches automatically to the message-ticker view.
+
+### Building locally
+
+```bash
+pip install buildozer==1.5.0 "cython==0.29.37"
+buildozer android debug
+# APK is written to bin/
+```
+
+See `BUILDING_ANDROID.md` for full instructions.
 
 ## Running Options
 
@@ -161,12 +190,23 @@ curl http://127.0.0.1:3005/set_language/he
 
 ```
 .
-├── telegram_message_ticker.py    # Main application file
-├── config.json                   # Configuration file for API credentials and settings
-├── channels.json                 # JSON file containing the channels to monitor
-├── media                         # Directory for storing downloaded media files
-├── requirements.txt              # List of required Python packages
-└── static                        # Directory for static files (e.g., JavaScript)
+├── main.py                        # Android APK entry point (Kivy)
+├── telegram_message_ticker.py     # Flask + Telethon backend (desktop & Android)
+├── buildozer.spec                 # Android build configuration
+├── requirements.txt               # Python dependencies (desktop)
+├── config.json.example            # Configuration template
+├── channels.json.example          # Channels template
+├── templates/
+│   ├── index.html                 # Ticker web UI
+│   └── loading.html               # Loading screen (web)
+├── static/
+│   ├── ticker.js                  # Socket.IO client logic
+│   └── styles.css                 # UI styles
+├── translations/
+│   ├── en.json                    # English strings
+│   └── he.json                    # Hebrew strings
+└── .github/workflows/
+    └── build-apk.yml              # CI/CD – builds & publishes the Android APK
 ```
 
 ## License
