@@ -119,11 +119,16 @@ jobs:
           echo "SDK setup complete."
           ls "$SDK_DIR/tools/bin/sdkmanager"
 
-          # Export ANDROID_HOME for all subsequent steps.
-          # Note: ${{ env.HOME }} does not expand in step env: blocks because
-          # HOME is a shell variable, not a GitHub Actions env context variable.
-          # Writing to GITHUB_ENV is the correct way to pass it forward.
-          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          # Export ANDROID_HOME and ANDROID_SDK_ROOT for all subsequent steps.
+          # The GitHub Actions runner pre-sets ANDROID_SDK_ROOT to the
+          # system-installed SDK (/usr/local/lib/android/sdk).  If ANDROID_HOME
+          # and ANDROID_SDK_ROOT point to different paths, Gradle 7.x/8.x
+          # aborts with:
+          #   "Several environment variables and/or system properties contain
+          #    different paths to the SDK."
+          # Both variables must be set to the same path.
+          echo "ANDROID_HOME=$SDK_DIR"        >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR"    >> "$GITHUB_ENV"
 
       # ------------------------------------------------------------------ #
       # 6a. Stable debug keystore
@@ -265,6 +270,10 @@ jobs:
           echo ""
           echo "=== gradlew clean assembleDebug --stacktrace ==="
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          # ANDROID_HOME is already exported from $GITHUB_ENV (set in step 5).
+          # Also set ANDROID_SDK_ROOT to the same value so Gradle does not
+          # complain about "different paths to the SDK".
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
           # Do NOT set JAVA_TOOL_OPTIONS – sdkmanager (Java 8) would reject --add-opens
           cd "$DIST_DIR"
           chmod +x gradlew
