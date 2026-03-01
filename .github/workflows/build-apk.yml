@@ -213,6 +213,27 @@ jobs:
           echo "Patched $COUNT file(s).  (0 is OK on a cold cache.)"
 
       # ------------------------------------------------------------------ #
+      # 6d. Remove SDL2 android-project example from dist
+      #
+      #     SDL2 2.28+ ships an android-project/ directory inside its
+      #     source tree containing a complete Gradle project (its own
+      #     settings.gradle, app/build.gradle with externalNativeBuild).
+      #     When python-for-android copies SDL2 into the dist's jni/SDL/
+      #     directory, Gradle's AGP discovers the example project and
+      #     tries to build it with ndk-build using the EXAMPLE Android.mk
+      #     instead of p4a's top-level one, causing:
+      #       [CXX1429] Module main depends on undefined modules: SDL2
+      #     Removing android-project/ from the cached dist prevents this.
+      #     On cold cache the directory doesn't exist yet (no-op); the
+      #     build step below retries after cleanup for that case.
+      # ------------------------------------------------------------------ #
+      - name: Remove SDL2 android-project from dist (warm cache)
+        run: |
+          find .buildozer -path "*/jni/SDL/android-project" -type d \
+            -exec rm -rf {} + 2>/dev/null || true
+          echo "Cleaned SDL2 android-project dirs from cached dist."
+
+      # ------------------------------------------------------------------ #
       # 7. Build debug APK
       #
       #    NOTE: Do NOT set JAVA_TOOL_OPTIONS here.  That variable is
@@ -221,9 +242,21 @@ jobs:
       #    cause sdkmanager to crash with "Unrecognized option".
       #    p4a uses Gradle 8.x which supports Java 17 natively — no
       #    extra JVM flags are needed.
+      #
+      #    On a cold cache the first attempt creates the p4a dist (which
+      #    re-extracts SDL2 with android-project/) and the Gradle build
+      #    fails.  The retry removes android-project/ and re-runs; the
+      #    dist already exists so buildozer skips straight to Gradle.
       # ------------------------------------------------------------------ #
       - name: Build debug APK
-        run: buildozer android debug
+        run: |
+          buildozer android debug || {
+            echo ""
+            echo "=== Build failed – removing SDL2 android-project and retrying ==="
+            find .buildozer -path "*/jni/SDL/android-project" -type d \
+              -exec rm -rf {} + 2>/dev/null || true
+            buildozer android debug
+          }
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
