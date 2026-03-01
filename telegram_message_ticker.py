@@ -81,6 +81,11 @@ _auth_code_value  = [None]
 _auth_2fa_event   = threading.Event()
 _auth_2fa_value   = [None]
 
+# Set to True by the Telethon thread once it is fully connected and ready.
+# main.py polls this flag before opening the WebView so the user never sees
+# the web ticker before Telegram auth is complete.
+_telethon_ready = False
+
 
 def _status(msg):
     """Log a progress message and forward it to the UI callback if set."""
@@ -148,12 +153,18 @@ def load_config(args=None):
         "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here"),
     }
 
-    current_dir = os.path.dirname(os.path.realpath(__file__))
-    config_file = os.path.join(current_dir, "config.json")
+    # On Android the config is stored in app_storage_path(), not next to this
+    # file. main.py passes the correct absolute path via args.config_file.
+    if args and getattr(args, 'config_file', None):
+        config_file = args.config_file
+    else:
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        config_file = os.path.join(current_dir, "config.json")
+
     logger.info(f"Loading config file from: {config_file}")
 
     if not os.path.exists(config_file):
-        logger.error("Missing required configuration: API ID, API hash, Phone number.")
+        logger.error("Missing required configuration file: %s", config_file)
         sys.exit(1)
 
     try:
@@ -167,8 +178,25 @@ def load_config(args=None):
         logger.error("Failed to decode JSON from config file.")
         sys.exit(1)
 
-    # Convert media_folder to absolute path
-    cfg["media_folder"] = os.path.join(current_dir, cfg["media_folder"])
+    # Apply explicit args overrides (highest priority)
+    if args:
+        if getattr(args, 'api_id', None) is not None:
+            cfg['api_id'] = args.api_id
+        if getattr(args, 'api_hash', None):
+            cfg['api_hash'] = args.api_hash
+        if getattr(args, 'phone_number', None):
+            cfg['phone_number'] = args.phone_number
+        # Use media_folder from args if it is an absolute path (Android provides
+        # an absolute path; CLI default "media" is relative and handled below).
+        mf = getattr(args, 'media_folder', None)
+        if mf and os.path.isabs(mf):
+            cfg['media_folder'] = mf
+
+    # Make media_folder absolute relative to the config file's directory
+    # (only when it is still a relative path after args override)
+    if not os.path.isabs(str(cfg.get("media_folder", "media"))):
+        config_dir = os.path.dirname(os.path.realpath(config_file))
+        cfg["media_folder"] = os.path.join(config_dir, cfg["media_folder"])
 
     logger.debug("Final CONFIG after merge: %s", cfg)
 
@@ -425,10 +453,12 @@ async def get_latest_messages_once(telegram_client, cfg):
                 logger.error("Channel ID missing for channel: %s", channel_name)
                 continue
 
+            _status(f'Fetching from {channel_name}…')
             entity = await telegram_client.get_entity(channel_id)
             messages = await telegram_client.get_messages(entity, limit=1)  # Fetch up to 1 message
             TOTAL_MESSAGES_FETCHED += len(messages)
             logger.info("Fetched %d message(s) from %s", len(messages), channel_name)
+            _status(f'Got {len(messages)} message(s) from {channel_name}')
 
             for message in messages:
                 logger.debug("Processing message ID %d from '%s'", message.id, channel_name)
@@ -758,7 +788,8 @@ def run_flask(cfg):
 
 async def run_telethon_client(cfg):
     """Run the Telethon client within its own event loop."""
-    global TELEGRAM_CLIENT, INITIAL_FETCH_DONE
+    global TELEGRAM_CLIENT, INITIAL_FETCH_DONE, _telethon_ready
+    _telethon_ready = False
 
     if not CONFIG:
         logger.error("CONFIG is not set. Cannot start Telegram client.")
@@ -819,6 +850,7 @@ async def run_telethon_client(cfg):
                 if INITIAL_FETCH_DONE:
                     setup_push_notifications(TELEGRAM_CLIENT)
                     _status('Ready! Listening for new messages.')
+                    _telethon_ready = True
 
             except SessionPasswordNeededError:
                 if _needs_auth_cb:

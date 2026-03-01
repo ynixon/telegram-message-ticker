@@ -17,6 +17,7 @@ import json
 import threading
 import logging
 import collections
+import datetime
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -24,9 +25,11 @@ from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from kivy.uix.scrollview import ScrollView
 from kivy.clock import Clock
 from kivy.utils import platform
 from kivy.core.window import Window
+from kivy.metrics import dp
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -35,15 +38,16 @@ SERVER_PORT = 3005
 _server_error = None
 
 # Thread-safe progress message queue (newest last, shown in loading screen)
-_status_msgs = collections.deque(maxlen=12)
+_status_msgs = collections.deque(maxlen=40)
 _status_lock = threading.Lock()
 
 
 def _on_status(msg):
     """Receives live progress messages from the background server thread."""
     logger.info("[STATUS] %s", msg)
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
     with _status_lock:
-        _status_msgs.append(msg)
+        _status_msgs.append(f'[{ts}] {msg}')
 
 
 # ---------------------------------------------------------------------------
@@ -124,9 +128,11 @@ def run_server(cfg):
         from telegram_message_ticker import main as ticker_main
         ticker_main(args)
 
-    except Exception as exc:
+    except BaseException as exc:
+        # Catch SystemExit (raised by sys.exit()) as well as ordinary exceptions
+        # so the loading screen always shows the error instead of silently dying.
         logger.error("Server error: %s", exc, exc_info=True)
-        _server_error = str(exc)
+        _server_error = str(exc) if str(exc) else type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -139,36 +145,48 @@ class SetupScreen(BoxLayout):
     def __init__(self, on_start, saved_cfg=None, **kwargs):
         super().__init__(
             orientation='vertical',
-            padding=[30, 40, 30, 24],
-            spacing=20,
             **kwargs
         )
         self.on_start_cb = on_start
 
-        self.add_widget(Label(
+        # ── Scrollable form area ────────────────────────────────────────────
+        scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
+        form = BoxLayout(
+            orientation='vertical',
+            padding=[dp(20), dp(28), dp(20), dp(16)],
+            spacing=dp(16),
+            size_hint_y=None,
+        )
+        form.bind(minimum_height=form.setter('height'))
+
+        form.add_widget(Label(
             text='[b]Telegram Message Ticker[/b]',
             markup=True,
             font_size='24sp',
-            size_hint_y=None, height=56,
+            size_hint_y=None, height=dp(56),
         ))
-        self.add_widget(Label(
+        form.add_widget(Label(
             text='Get your credentials at my.telegram.org \u2192 API development tools',
             font_size='13sp',
             color=(0.75, 0.75, 0.75, 1),
-            size_hint_y=None, height=44,
+            size_hint_y=None, height=dp(48),
             halign='center',
-            text_size=(Window.width - 60, None),
+            text_size=(Window.width - dp(40), None),
         ))
 
-        def _field(label_text, hint, **kw):
-            box = BoxLayout(orientation='vertical', size_hint_y=None, height=88, spacing=4)
+        def _field(label_text, hint, multiline=False, **kw):
+            # Use density-independent pixels so fields look right on all screens
+            inp_height = dp(100) if multiline else dp(72)
+            box_height = dp(30) + dp(6) + inp_height
+            box = BoxLayout(orientation='vertical', size_hint_y=None,
+                            height=box_height, spacing=dp(6))
             box.add_widget(Label(
                 text=label_text,
                 font_size='14sp',
                 color=(0.9, 0.9, 0.9, 1),
-                size_hint_y=None, height=26,
+                size_hint_y=None, height=dp(30),
                 halign='left',
-                text_size=(Window.width - 60, None),
+                text_size=(Window.width - dp(40), None),
             ))
             inp = TextInput(
                 hint_text=hint,
@@ -176,45 +194,61 @@ class SetupScreen(BoxLayout):
                 foreground_color=(0, 0, 0, 1),
                 background_color=(1, 1, 1, 1),
                 cursor_color=(0.1, 0.1, 0.1, 1),
-                multiline=False,
+                multiline=multiline,
                 font_size='16sp',
-                padding=[12, 14, 12, 14],
-                size_hint_y=None, height=58,
+                padding=[dp(12), dp(14), dp(12), dp(14)],
+                size_hint_y=None, height=inp_height,
                 **kw
             )
             box.add_widget(inp)
             return box, inp
 
-        id_box,   self.api_id_input   = _field('API ID',       'e.g. 5390776',                       input_filter='int')
-        hash_box, self.api_hash_input = _field('API Hash',     'e.g. 2df8c2493f52845f2045f035499e837b')
-        phone_box, self.phone_input   = _field('Phone number', 'e.g. +12223334444')
+        id_box,    self.api_id_input   = _field('API ID',       'e.g. 5390776',
+                                                 input_filter='int')
+        # API hash is 32 chars — use multiline so the full value is always visible
+        hash_box,  self.api_hash_input = _field('API Hash',
+                                                 'e.g. 2df8c2493f52845f2045f035499e837b',
+                                                 multiline=True)
+        phone_box, self.phone_input    = _field('Phone number', 'e.g. +12223334444')
 
         for box in (id_box, hash_box, phone_box):
-            self.add_widget(box)
+            form.add_widget(box)
+
+        scroll.add_widget(form)
+        self.add_widget(scroll)
+
+        # ── Fixed bottom bar (always visible) ──────────────────────────────
+        bottom = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=dp(58) + dp(10) + dp(40) + dp(24),
+            padding=[dp(20), dp(10), dp(20), dp(14)],
+            spacing=dp(10),
+        )
+
+        start_btn = Button(
+            text='Start',
+            size_hint_y=None, height=dp(58),
+            font_size='17sp',
+            background_color=(0.18, 0.55, 0.88, 1),
+        )
+        start_btn.bind(on_press=self._submit)
+        bottom.add_widget(start_btn)
+
+        self.msg_label = Label(
+            text='',
+            color=(1, 0.35, 0.35, 1),
+            font_size='14sp',
+            size_hint_y=None, height=dp(40),
+        )
+        bottom.add_widget(self.msg_label)
+        self.add_widget(bottom)
 
         # Pre-fill from saved config so the user can review / edit before starting
         if saved_cfg:
             self.api_id_input.text   = str(saved_cfg.get('api_id',       ''))
             self.api_hash_input.text = str(saved_cfg.get('api_hash',     ''))
             self.phone_input.text    = str(saved_cfg.get('phone_number', ''))
-
-        start_btn = Button(
-            text='Start',
-            size_hint_y=None, height=58,
-            font_size='17sp',
-            background_color=(0.18, 0.55, 0.88, 1),
-        )
-        start_btn.bind(on_press=self._submit)
-        self.add_widget(start_btn)
-
-        self.msg_label = Label(
-            text='',
-            color=(1, 0.35, 0.35, 1),
-            font_size='14sp',
-            size_hint_y=None, height=44,
-        )
-        self.add_widget(self.msg_label)
-        self.add_widget(Widget())
 
     def _submit(self, *_):
         api_id_text   = self.api_id_input.text.strip()
@@ -308,36 +342,42 @@ class LoadingScreen(BoxLayout):
     """Progress screen shown while the server is starting up."""
 
     def __init__(self, on_reset, **kwargs):
-        super().__init__(orientation='vertical', padding=[32, 40, 32, 24], spacing=12, **kwargs)
+        super().__init__(orientation='vertical',
+                         padding=[dp(24), dp(32), dp(24), dp(16)],
+                         spacing=dp(10), **kwargs)
         self._on_reset = on_reset
 
         # Latest status line shown in bold at the top
         self._status = Label(
             text='Starting\u2026',
-            font_size='16sp',
+            font_size='17sp',
             bold=True,
-            size_hint_y=None, height=36,
+            size_hint_y=None, height=dp(48),
             halign='center',
             color=(1, 1, 1, 1),
-            text_size=(Window.width - 64, None),
+            text_size=(Window.width - dp(48), None),
         )
         self.add_widget(self._status)
 
-        # Scrolling log of previous status lines
+        # Scrollable log of all status lines
+        self._scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
         self._log = Label(
             text='',
             font_size='12sp',
             halign='left',
             valign='top',
             color=(0.6, 0.85, 0.6, 1),
-            text_size=(Window.width - 64, None),
-            size_hint_y=1,
+            text_size=(Window.width - dp(48), None),
+            size_hint_y=None,
         )
-        self.add_widget(self._log)
+        # Let the label grow to fit its text content
+        self._log.bind(texture_size=self._log.setter('size'))
+        self._scroll.add_widget(self._log)
+        self.add_widget(self._scroll)
 
         self._reset_btn = Button(
             text='Reset Credentials & Try Again',
-            size_hint_y=None, height=56,
+            size_hint_y=None, height=dp(56),
             font_size='15sp',
             background_color=(0.75, 0.18, 0.18, 1),
             opacity=0,
@@ -347,10 +387,12 @@ class LoadingScreen(BoxLayout):
         self.add_widget(self._reset_btn)
 
     def update_status(self, msgs):
-        """Show newest message as the header; older ones in the log area."""
+        """Show newest message as the header; older ones in the scrollable log."""
         if msgs:
             self._status.text = msgs[-1]
             self._log.text    = '\n'.join(list(msgs)[:-1])
+            # Auto-scroll to bottom so newest log entries are visible
+            Clock.schedule_once(lambda dt: setattr(self._scroll, 'scroll_y', 0), 0.05)
 
     def set_text(self, text):
         self._status.text = text
@@ -370,6 +412,7 @@ class TelegramTickerApp(App):
     def build(self):
         Window.clearcolor = (0.07, 0.07, 0.07, 1)
         self._container = BoxLayout()
+        self._poll_event = None  # track active Clock interval to avoid duplicates
         # Always show the setup screen; pre-fill with any saved credentials
         # so returning users can review and just tap Start.
         cfg = load_saved_config()
@@ -377,6 +420,12 @@ class TelegramTickerApp(App):
             SetupScreen(on_start=self._begin_server, saved_cfg=cfg)
         )
         return self._container
+
+    def _start_polling(self):
+        """Start (or restart) the 1-second server-status polling loop."""
+        if self._poll_event:
+            self._poll_event.cancel()
+        self._poll_event = Clock.schedule_interval(self._poll_server, 1.0)
 
     # ------------------------------------------------------------------
     def _begin_server(self, cfg):
@@ -395,7 +444,7 @@ class TelegramTickerApp(App):
         self._container.add_widget(self._loading)
 
         threading.Thread(target=run_server, args=(cfg,), daemon=True).start()
-        Clock.schedule_interval(self._poll_server, 1.0)
+        self._start_polling()
 
     # ------------------------------------------------------------------
     def _show_auth_screen(self, kind, phone):
@@ -407,11 +456,11 @@ class TelegramTickerApp(App):
             def _submit(value):
                 if not value:
                     return
-                # Return to loading screen and resume polling
+                # Return to loading screen and resume polling (cancel old interval first)
                 self._container.clear_widgets()
                 self._loading = LoadingScreen(on_reset=self._reset)
                 self._container.add_widget(self._loading)
-                Clock.schedule_interval(self._poll_server, 1.0)
+                self._start_polling()
                 provide(value)
 
             self._container.clear_widgets()
@@ -424,6 +473,9 @@ class TelegramTickerApp(App):
     def _reset(self):
         global _server_error
         _server_error = None
+        if self._poll_event:
+            self._poll_event.cancel()
+            self._poll_event = None
         with _status_lock:
             _status_msgs.clear()
         try:
@@ -448,16 +500,28 @@ class TelegramTickerApp(App):
             if hasattr(self, '_loading') and self._loading.parent:
                 self._loading.set_text(f'Error: {_server_error}')
                 self._loading.show_reset_button()
+            self._poll_event = None
             return False  # stop polling
 
         import socket
         try:
             sock = socket.create_connection(('127.0.0.1', SERVER_PORT), timeout=0.5)
             sock.close()
-            Clock.schedule_once(lambda _dt: self._open_webview(), 0.8)
-            return False  # stop polling
         except OSError:
-            pass
+            return  # Flask not up yet – keep polling
+
+        # Flask is up; also wait until Telethon is fully connected before
+        # opening the WebView, so the ticker is ready when the UI appears.
+        try:
+            import telegram_message_ticker as _tmt
+            if not _tmt._telethon_ready:
+                return  # still authenticating – keep polling
+        except Exception:
+            return
+
+        self._poll_event = None
+        Clock.schedule_once(lambda _dt: self._open_webview(), 0.5)
+        return False  # stop polling
 
     # ------------------------------------------------------------------
     def _open_webview(self):
