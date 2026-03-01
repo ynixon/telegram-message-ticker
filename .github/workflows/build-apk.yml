@@ -63,9 +63,9 @@ jobs:
           path: |
             ~/.buildozer
             ~/.gradle/wrapper
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            buildozer-v2-${{ runner.os }}-
 
       # ------------------------------------------------------------------ #
       # 5. Pre-install Android SDK command-line tools + legacy shim
