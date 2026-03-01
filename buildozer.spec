@@ -11,8 +11,8 @@ source.include_exts = py,png,jpg,jpeg,gif,kv,atlas,json,css,js,html,txt
 source.include_patterns = templates/*,static/*,translations/*,*.json,*.example
 
 # Version (increment numeric_version on every release so Android accepts updates)
-version = 1.2
-android.numeric_version = 3
+version = 1.3
+android.numeric_version = 4
 
 # Requirements
 # NOTE: newspaper3k is intentionally excluded – it is not imported by the
@@ -85,6 +85,13 @@ android.ndk_api = 24
 android.private_storage = True
 android.accept_sdk_license = True
 android.archs = arm64-v8a, armeabi-v7a
+
+# Android 9+ blocks HTTP (cleartext) traffic by default, including to localhost.
+# The app runs a local Flask server on http://127.0.0.1:3005 and opens it in a
+# WebView, so cleartext traffic must be explicitly permitted for the loopback
+# interface.  This injects android:usesCleartextTraffic="true" into the
+# <application> element of AndroidManifest.xml.
+android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
 
 # greenlet 2.x (required for Python 3.11) is a C++ extension that links
 # against libc++_shared.so (the NDK shared C++ STL).  Android does not
