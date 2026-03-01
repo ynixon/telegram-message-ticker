@@ -91,7 +91,7 @@ android.archs = arm64-v8a, armeabi-v7a
 # WebView, so cleartext traffic must be explicitly permitted for the loopback
 # interface.  This injects android:usesCleartextTraffic="true" into the
 # <application> element of AndroidManifest.xml.
-android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
+android.extra_manifest_application_arguments = %(source.dir)s/extra_manifest_application.txt
 
 # greenlet 2.x (required for Python 3.11) is a C++ extension that links
 # against libc++_shared.so (the NDK shared C++ STL).  Android does not
