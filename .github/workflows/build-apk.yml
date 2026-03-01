@@ -177,25 +177,35 @@ jobs:
           ls -lh libs/armeabi-v7a/libc++_shared.so libs/arm64-v8a/libc++_shared.so
 
       # ------------------------------------------------------------------ #
-      # 6c. Patch p4a Gradle templates (jcenter → mavenCentral)
+      # 6c. Patch Gradle files (jcenter → mavenCentral)
       #
       #     JCenter (jcenter.bintray.com) shut down February 2022.
       #     Some p4a bootstrap templates still list jcenter() as a
       #     Maven repository; Gradle hangs/fails trying to reach it.
-      #     We patch every *.tmpl and *.gradle file in the p4a package
-      #     to replace jcenter() with mavenCentral() before the build.
+      #
+      #     IMPORTANT: pythonforandroid is NOT a pip package.  Buildozer
+      #     downloads p4a into its own managed directory at:
+      #       ~/.buildozer/android/platform/python-for-android-*/
+      #     We search that location directly.  On a cold cache (first run)
+      #     p4a hasn't been downloaded yet — COUNT=0 is expected and OK.
       # ------------------------------------------------------------------ #
-      - name: Patch p4a Gradle templates (jcenter → mavenCentral)
+      - name: Patch Gradle files (jcenter → mavenCentral)
         run: |
-          P4A_DIR=$(python -c "import pythonforandroid, os; print(os.path.dirname(pythonforandroid.__file__))")
-          echo "python-for-android location: $P4A_DIR"
           COUNT=0
-          while IFS= read -r f; do
-            echo "  Patching: $f"
-            sed -i 's/jcenter()/mavenCentral()/g' "$f"
-            COUNT=$((COUNT + 1))
-          done < <(grep -rl "jcenter()" "$P4A_DIR" --include="*.tmpl" --include="*.gradle" 2>/dev/null || true)
-          echo "Patched $COUNT file(s)."
+          for SEARCH_ROOT in \
+              "$HOME/.buildozer/android/platform/python-for-android-"* \
+              ".buildozer"; do
+            [ -d "$SEARCH_ROOT" ] || continue
+            echo "Searching: $SEARCH_ROOT"
+            while IFS= read -r f; do
+              echo "  Patching: $f"
+              sed -i 's/jcenter()/mavenCentral()/g' "$f"
+              COUNT=$((COUNT + 1))
+            done < <(grep -rl "jcenter()" "$SEARCH_ROOT" \
+                       --include="*.tmpl" --include="*.gradle" \
+                       2>/dev/null || true)
+          done
+          echo "Patched $COUNT file(s).  (0 is OK on a cold cache.)"
 
       # ------------------------------------------------------------------ #
       # 7. Build debug APK
