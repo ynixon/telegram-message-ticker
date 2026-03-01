@@ -177,6 +177,27 @@ jobs:
           ls -lh libs/armeabi-v7a/libc++_shared.so libs/arm64-v8a/libc++_shared.so
 
       # ------------------------------------------------------------------ #
+      # 6c. Patch p4a Gradle templates (jcenter → mavenCentral)
+      #
+      #     JCenter (jcenter.bintray.com) shut down February 2022.
+      #     Some p4a bootstrap templates still list jcenter() as a
+      #     Maven repository; Gradle hangs/fails trying to reach it.
+      #     We patch every *.tmpl and *.gradle file in the p4a package
+      #     to replace jcenter() with mavenCentral() before the build.
+      # ------------------------------------------------------------------ #
+      - name: Patch p4a Gradle templates (jcenter → mavenCentral)
+        run: |
+          P4A_DIR=$(python -c "import pythonforandroid, os; print(os.path.dirname(pythonforandroid.__file__))")
+          echo "python-for-android location: $P4A_DIR"
+          COUNT=0
+          while IFS= read -r f; do
+            echo "  Patching: $f"
+            sed -i 's/jcenter()/mavenCentral()/g' "$f"
+            COUNT=$((COUNT + 1))
+          done < <(grep -rl "jcenter()" "$P4A_DIR" --include="*.tmpl" --include="*.gradle" 2>/dev/null || true)
+          echo "Patched $COUNT file(s)."
+
+      # ------------------------------------------------------------------ #
       # 7. Build debug APK
       #
       #    NOTE: Do NOT set JAVA_TOOL_OPTIONS here.  That variable is
@@ -194,9 +215,11 @@ jobs:
       # ------------------------------------------------------------------ #
       # 7b. Diagnose build failures
       #
-      #     Runs only when the build step above fails.  Prints the
-      #     gradle-wrapper.properties, generated AndroidManifest.xml, and
-      #     re-runs gradlew with --stacktrace so the real error is visible.
+      #     Runs only when the build step above fails.  Prints key
+      #     Gradle config files and re-runs gradlew with --stacktrace
+      #     so the real error is visible.  Both the FIRST 200 lines
+      #     (catches repository/download errors) and the LAST 300 lines
+      #     (catches compile/link errors) of the Gradle output are shown.
       # ------------------------------------------------------------------ #
       - name: Diagnose build failure
         if: failure()
@@ -213,6 +236,16 @@ jobs:
           cat "$DIST_DIR/gradle/wrapper/gradle-wrapper.properties" || true
 
           echo ""
+          echo "=== local.properties ==="
+          cat "$DIST_DIR/local.properties" 2>/dev/null || echo "(not found)"
+
+          echo ""
+          echo "=== build.gradle ==="
+          cat "$DIST_DIR/build.gradle" 2>/dev/null || \
+            find "$DIST_DIR" -maxdepth 2 -name "build.gradle" | head -3 | \
+              while read f; do echo "--- $f ---"; cat "$f"; done
+
+          echo ""
           echo "=== AndroidManifest.xml ==="
           find .buildozer -name "AndroidManifest.xml" 2>/dev/null | head -5 | while read f; do
             echo "--- $f ---"
@@ -220,12 +253,20 @@ jobs:
           done
 
           echo ""
-          echo "=== gradlew clean assembleDebug --stacktrace (last 400 lines) ==="
+          echo "=== gradlew clean assembleDebug --stacktrace ==="
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           # Do NOT set JAVA_TOOL_OPTIONS – sdkmanager (Java 8) would reject --add-opens
           cd "$DIST_DIR"
           chmod +x gradlew
-          ./gradlew clean assembleDebug --stacktrace 2>&1 | tail -400 || true
+          ./gradlew clean assembleDebug --stacktrace > /tmp/gradle-out.txt 2>&1 || true
+          TOTAL=$(wc -l < /tmp/gradle-out.txt)
+          echo "Total Gradle output lines: $TOTAL"
+          echo ""
+          echo "--- First 200 lines ---"
+          head -200 /tmp/gradle-out.txt
+          echo ""
+          echo "--- Last 300 lines ---"
+          tail -300 /tmp/gradle-out.txt
 
       # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful
