@@ -181,6 +181,33 @@ jobs:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       # ------------------------------------------------------------------ #
+      # 7b. Dump Gradle / p4a logs on failure (diagnostic only)
+      # ------------------------------------------------------------------ #
+      - name: Dump build logs on failure
+        if: failure()
+        run: |
+          echo "=== Last 300 lines of .buildozer/android/platform/*.log ===" || true
+          find .buildozer -maxdepth 5 -name "*.log" 2>/dev/null \
+            | while read f; do
+                echo "--- $f ---"
+                tail -300 "$f"
+              done
+          echo ""
+          echo "=== Gradle build outputs (build/outputs/) ===" || true
+          find .buildozer -path "*/build/outputs/logs/*" 2>/dev/null \
+            | while read f; do
+                echo "--- $f ---"
+                cat "$f"
+              done
+          echo ""
+          echo "=== AndroidManifest.xml (generated) ===" || true
+          find .buildozer -name "AndroidManifest.xml" 2>/dev/null \
+            | while read f; do
+                echo "--- $f ---"
+                cat "$f"
+              done
+
+      # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful
       # ------------------------------------------------------------------ #
       - name: Rename APK
