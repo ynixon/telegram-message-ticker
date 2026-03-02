@@ -11,8 +11,8 @@ source.include_exts = py,png,jpg,jpeg,gif,kv,atlas,json,css,js,html,txt
 source.include_patterns = templates/*,static/*,translations/*,*.json,*.example
 
 # Version (increment numeric_version on every release so Android accepts updates)
-version = 1.8
-android.numeric_version = 9
+version = 1.9
+android.numeric_version = 10
 
 # Requirements
 # NOTE: newspaper3k is intentionally excluded – it is not imported by the

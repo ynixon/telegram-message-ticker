@@ -889,6 +889,10 @@ async def run_telethon_client(cfg):
                     TELEGRAM_CLIENT.session.save()
                     _status('Signed in successfully!')
 
+                # Mark ready so the WebView opens immediately (UI shows
+                # "loading" until messages arrive, which is fine).
+                _telethon_ready = True
+
                 # Auto-discover channels if none are configured
                 if not CHANNELS:
                     discovered = await auto_discover_channels(
@@ -901,19 +905,14 @@ async def run_telethon_client(cfg):
                             LAST_PROCESSED_MESSAGE[ch["id"]] = None
 
                 _status('Fetching latest messages\u2026')
-                # Perform initial fetch of messages
                 await get_latest_messages_once(TELEGRAM_CLIENT, CONFIG)
 
-                # Set up notifications after initial fetch
                 if INITIAL_FETCH_DONE:
                     setup_push_notifications(TELEGRAM_CLIENT)
                     _status('Ready! Listening for new messages.')
-                    _telethon_ready = True
-                    # Keep the loop alive for push notifications
                     while not STOP_EVENT_LOOP:
                         await asyncio.sleep(5)
                 else:
-                    # Fetch didn't complete — wait before retrying to avoid flood
                     _status('Retrying message fetch in 15 seconds\u2026')
                     await asyncio.sleep(15)
 
