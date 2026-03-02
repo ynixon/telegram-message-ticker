@@ -211,30 +211,77 @@ async def list_all_channels(telegram_client):
         logger.info("Channel/Group: %s, ID: %s", dialog.name, dialog.id)
 
 
+async def auto_discover_channels(telegram_client, channels_file):
+    """Auto-discover broadcast channels from the user's Telegram account.
+    
+    Writes the discovered channels to channels_file and returns the list.
+    Only includes broadcast channels (not groups, DMs, etc.).
+    """
+    _status('Discovering your Telegram channels\u2026')
+    try:
+        dialogs = await telegram_client.get_dialogs()
+        channels = []
+        for dialog in dialogs:
+            entity = dialog.entity
+            if getattr(entity, 'broadcast', False):
+                channels.append({
+                    "id": dialog.id,
+                    "name": dialog.name or f"Channel {dialog.id}",
+                })
+        if channels:
+            with open(channels_file, 'w', encoding='utf-8') as f:
+                json.dump({"channels": channels}, f, ensure_ascii=False, indent=2)
+            logger.info("Auto-discovered %d broadcast channels, saved to %s", len(channels), channels_file)
+            _status(f'Found {len(channels)} channels!')
+        else:
+            logger.warning("No broadcast channels found in user's account")
+            _status('No broadcast channels found in your Telegram account.')
+        return channels
+    except Exception as err:
+        logger.error("Failed to auto-discover channels: %s", err)
+        _status(f'Channel discovery failed: {err}')
+        return []
+
+
 def load_channels(channel_list_file):
-    """Load the list of channels from the configuration file."""
+    """Load the list of channels from the configuration file.
+    
+    Returns an empty list (instead of exiting) when no valid channels are found,
+    allowing the caller to attempt auto-discovery.
+    """
     if not os.path.exists(channel_list_file):
         current_dir = os.path.dirname(os.path.realpath(__file__))
         channel_list_file = os.path.join(current_dir, "channels.json")
         if not os.path.exists(channel_list_file):
-            logger.error("Missing channels list file: %s", channel_list_file)
-            sys.exit(1)
+            logger.warning("Missing channels list file: %s — will try auto-discovery after login", channel_list_file)
+            return []
 
     try:
         with open(channel_list_file, "r", encoding="utf-8") as f:
             channels = json.load(f)["channels"]
             for channel in channels:
-                channel_id = channel.get("id")
+                raw_id = channel.get("id")
                 channel_name = channel.get("name", "Unknown")
-                if channel_id:
-                    channel_message_counters[channel_id] = 0
-                    LAST_PROCESSED_MESSAGE[channel_id] = None
+                # Ensure channel ID is an integer for Telethon compatibility
+                if raw_id is not None:
+                    try:
+                        channel["id"] = int(raw_id)
+                    except (ValueError, TypeError):
+                        logger.warning("Invalid channel ID '%s' for %s — skipping", raw_id, channel_name)
+                        channel["id"] = None
+                        continue
+                    channel_message_counters[channel["id"]] = 0
+                    LAST_PROCESSED_MESSAGE[channel["id"]] = None
                 else:
                     logger.warning("Channel without ID found: %s", channel_name)
+            # Filter out channels with invalid/missing IDs
+            channels = [ch for ch in channels if ch.get("id") is not None]
+            if not channels:
+                logger.warning("No valid channels found in %s — will try auto-discovery after login", channel_list_file)
             return channels
     except Exception as load_err:
         logger.error("Failed to load channels from %s: %s", channel_list_file, load_err)
-        sys.exit(1)
+        return []
 
 
 async def download_media_and_get_tag(telegram_client, message, media_dir, channel_name):
@@ -842,6 +889,17 @@ async def run_telethon_client(cfg):
                     TELEGRAM_CLIENT.session.save()
                     _status('Signed in successfully!')
 
+                # Auto-discover channels if none are configured
+                if not CHANNELS:
+                    discovered = await auto_discover_channels(
+                        TELEGRAM_CLIENT, CONFIG.get("channel_list_file", "channels.json")
+                    )
+                    if discovered:
+                        CHANNELS.extend(discovered)
+                        for ch in CHANNELS:
+                            channel_message_counters[ch["id"]] = 0
+                            LAST_PROCESSED_MESSAGE[ch["id"]] = None
+
                 _status('Fetching latest messages\u2026')
                 # Perform initial fetch of messages
                 await get_latest_messages_once(TELEGRAM_CLIENT, CONFIG)
@@ -851,6 +909,13 @@ async def run_telethon_client(cfg):
                     setup_push_notifications(TELEGRAM_CLIENT)
                     _status('Ready! Listening for new messages.')
                     _telethon_ready = True
+                    # Keep the loop alive for push notifications
+                    while not STOP_EVENT_LOOP:
+                        await asyncio.sleep(5)
+                else:
+                    # Fetch didn't complete — wait before retrying to avoid flood
+                    _status('Retrying message fetch in 15 seconds\u2026')
+                    await asyncio.sleep(15)
 
             except SessionPasswordNeededError:
                 if _needs_auth_cb:

@@ -413,12 +413,14 @@ class TelegramTickerApp(App):
         Window.clearcolor = (0.07, 0.07, 0.07, 1)
         self._container = BoxLayout()
         self._poll_event = None  # track active Clock interval to avoid duplicates
-        # Always show the setup screen; pre-fill with any saved credentials
-        # so returning users can review and just tap Start.
         cfg = load_saved_config()
-        self._container.add_widget(
-            SetupScreen(on_start=self._begin_server, saved_cfg=cfg)
-        )
+        # Auto-start if saved credentials are complete; otherwise show setup
+        if cfg.get('api_id') and cfg.get('api_hash') and cfg.get('phone_number'):
+            self._begin_server(cfg)
+        else:
+            self._container.add_widget(
+                SetupScreen(on_start=self._begin_server, saved_cfg=cfg)
+            )
         return self._container
 
     def _start_polling(self):

@@ -11,8 +11,8 @@ source.include_exts = py,png,jpg,jpeg,gif,kv,atlas,json,css,js,html,txt
 source.include_patterns = templates/*,static/*,translations/*,*.json,*.example
 
 # Version (increment numeric_version on every release so Android accepts updates)
-version = 1.7
-android.numeric_version = 8
+version = 1.8
+android.numeric_version = 9
 
 # Requirements
 # NOTE: newspaper3k is intentionally excluded – it is not imported by the
@@ -105,10 +105,9 @@ android.archs = arm64-v8a, armeabi-v7a
 android.add_libs_armeabi_v7a = libs/armeabi-v7a/libc++_shared.so
 android.add_libs_arm64_v8a = libs/arm64-v8a/libc++_shared.so
 
-# Debug signing – use a stable keystore so that successive APK builds can be
-# installed as updates (same cert = same app).  The keystore is stored as a
-# base64 GitHub Actions secret (DEBUG_KEYSTORE_BASE64) for reliability, with
-# cache fallback.  See .github/workflows/build-apk.yml for details.
+# Debug signing – use a stable keystore committed to the repo so that
+# successive APK builds can be installed as updates (same cert = same app).
+# This is a debug key only — no security concern.
 android.debug_keystore = debug.keystore
 android.debug_keystore_alias = androiddebugkey
 android.debug_keystore_passwd = android

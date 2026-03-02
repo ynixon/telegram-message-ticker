@@ -133,54 +133,20 @@ jobs:
       # ------------------------------------------------------------------ #
       # 6a. Stable debug keystore
       #
-      #     Android refuses to update an APK if the signing certificate
-      #     changes between builds.  The keystore is stored as a
-      #     base64-encoded GitHub Actions secret (DEBUG_KEYSTORE_BASE64)
-      #     so it is never lost to cache eviction.
-      #
-      #     Fallback: if the secret is not set, we fall back to cache +
-      #     keytool generation (but cache eviction may cause signature
-      #     mismatches — set the secret for stable upgrades).
-      #
-      #     To create the secret from an existing keystore:
-      #       base64 -w0 debug.keystore | pbcopy   # macOS
-      #       base64 -w0 debug.keystore | xclip     # Linux
-      #     Then add it as DEBUG_KEYSTORE_BASE64 in repo Settings → Secrets.
+      #     Android refuses to upgrade an APK if the signing certificate
+      #     changes between builds.  The debug.keystore is committed to
+      #     the repo so every build uses the exact same certificate.
+      #     (It's a debug key — no security concern.)
       # ------------------------------------------------------------------ #
-      - name: Restore debug keystore from secret
-        if: env.DEBUG_KEYSTORE_BASE64 != ''
-        run: echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > debug.keystore
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-
-      - name: Restore debug keystore from cache (fallback)
-        if: env.DEBUG_KEYSTORE_BASE64 == ''
-        id: keystore-cache
-        uses: actions/cache@v4
-        with:
-          path: debug.keystore
-          key: android-debug-keystore-stable-v1
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-
-      - name: Generate debug keystore (first run only)
-        if: env.DEBUG_KEYSTORE_BASE64 == '' && steps.keystore-cache.outputs.cache-hit != 'true'
+      - name: Verify debug keystore exists
         run: |
-          keytool -genkey -v \
-            -keystore debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          echo "Generated new debug keystore."
-          echo "⚠️  To avoid upgrade failures, save this keystore as a GitHub secret:"
-          echo "    base64 -w0 debug.keystore"
-          echo "    → Add output as DEBUG_KEYSTORE_BASE64 in repo Settings → Secrets"
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          if [ ! -f debug.keystore ]; then
+            echo "ERROR: debug.keystore not found in repo root!"
+            echo "Generate one with:"
+            echo "  keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Android Debug,O=Android,C=US'"
+            exit 1
+          fi
+          echo "✅ debug.keystore found ($(wc -c < debug.keystore) bytes)"
 
       # ------------------------------------------------------------------ #
       # 6b. Bundle libc++_shared.so for greenlet
