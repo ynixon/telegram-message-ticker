@@ -102,11 +102,11 @@ jobs:
           # uses Java 11 (compatible with Gradle 7.5) while sdkmanager (cmdline-tools)
           # requires Java 17 (class file version 61).
           mkdir -p "$SDK_DIR/tools/bin"
-          cat > "$SDK_DIR/tools/bin/sdkmanager" << 'SHIMEOF'
-#!/usr/bin/env bash
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-exec "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$@"
-SHIMEOF
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' \
+            'exec "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$@"' \
+            > "$SDK_DIR/tools/bin/sdkmanager"
           chmod +x "$SDK_DIR/tools/bin/sdkmanager"
 
           # Accept licences
