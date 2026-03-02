@@ -556,6 +556,84 @@ jobs:
           mv "$APK" bin/telegram-message-ticker-debug.apk
 
       # ------------------------------------------------------------------ #
+      # 8b. Guarantee usesCleartextTraffic is in the APK
+      #
+      #     All previous patching attempts (template sed, post-build Gradle
+      #     rebuild) are best-effort.  This step is the BULLETPROOF fallback:
+      #     decode the final APK with apktool, verify / inject the attribute,
+      #     rebuild, zipalign, and re-sign.  If the attribute is already
+      #     present this step is a no-op (skips rebuild).
+      # ------------------------------------------------------------------ #
+      - name: Ensure cleartext traffic in APK
+        run: |
+          APK="bin/telegram-message-ticker-debug.apk"
+
+          # Install apktool; zipalign comes from Android SDK build-tools
+          sudo apt-get update -qq && sudo apt-get install -y -qq apktool > /dev/null 2>&1 || {
+            # Fallback: download apktool jar directly
+            APKTOOL_VER="2.9.3"
+            curl -sL "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" -o /tmp/apktool.jar
+            apktool() { java -jar /tmp/apktool.jar "$@"; }
+          }
+          # Find zipalign from build-tools
+          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -name "zipalign" -type f 2>/dev/null | sort -V | tail -1)
+          if [ -z "$ZIPALIGN" ]; then
+            echo "::error::zipalign not found in build-tools"
+            exit 1
+          fi
+
+          echo "=== Decoding APK ==="
+          apktool d -f -o /tmp/apk-decoded "$APK"
+
+          MANIFEST="/tmp/apk-decoded/AndroidManifest.xml"
+          if grep -q 'usesCleartextTraffic="true"' "$MANIFEST"; then
+            echo "✓ usesCleartextTraffic already present — no patching needed"
+          else
+            echo "✗ usesCleartextTraffic MISSING — patching now"
+            sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+            echo "  Patched manifest:"
+            grep -n 'usesCleartextTraffic' "$MANIFEST" || true
+
+            echo "=== Rebuilding APK ==="
+            apktool b /tmp/apk-decoded -o /tmp/patched-unsigned.apk
+
+            echo "=== Zipaligning ==="
+            "$ZIPALIGN" -f 4 /tmp/patched-unsigned.apk /tmp/patched-aligned.apk
+
+            echo "=== Re-signing with debug keystore ==="
+            # Use apksigner from the Android SDK build-tools
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" -type f 2>/dev/null | sort -V | tail -1)
+            if [ -z "$APKSIGNER" ]; then
+              echo "::error::apksigner not found in build-tools"
+              exit 1
+            fi
+            KS="debug.keystore"
+            [ -f "$KS" ] || KS="$HOME/.android/debug.keystore"
+            "$APKSIGNER" sign \
+              --ks "$KS" \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              /tmp/patched-aligned.apk
+
+            cp /tmp/patched-aligned.apk "$APK"
+            echo "✓ Replaced APK with patched version"
+          fi
+
+          # Final verification
+          echo "=== Final manifest verification ==="
+          apktool d -f -o /tmp/apk-verify "$APK"
+          if grep -q 'usesCleartextTraffic="true"' /tmp/apk-verify/AndroidManifest.xml; then
+            echo "✓ CONFIRMED: usesCleartextTraffic=\"true\" is in the final APK"
+          else
+            echo "::error::usesCleartextTraffic still missing after patching!"
+            cat /tmp/apk-verify/AndroidManifest.xml
+            exit 1
+          fi
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      # ------------------------------------------------------------------ #
       # 9. Upload APK as workflow artifact (always downloadable)
       # ------------------------------------------------------------------ #
       - name: Upload APK artifact
