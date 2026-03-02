@@ -312,6 +312,23 @@ jobs:
             done
           }
 
+          # Helper: upgrade Gradle wrapper to a version that supports Java 17.0.18+
+          # The p4a dist may ship Gradle 7.5 whose JavaVersion parser cannot handle
+          # certain Java 17 micro-version strings, causing:
+          #   "Could not determine java version from '17.0.18'"
+          # Gradle 7.6.4 (latest 7.x) properly parses all Java 17 versions and is
+          # compatible with AGP 7.x used by p4a.
+          upgrade_gradle_wrapper() {
+            for ROOT in .buildozer "$HOME/.buildozer"; do
+              [ -d "$ROOT" ] || continue
+              find "$ROOT" -name "gradle-wrapper.properties" 2>/dev/null \
+              | while read -r f; do
+                  sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.4-all.zip|' "$f"
+                  echo "  Upgraded Gradle wrapper: $f"
+                done || true
+            done
+          }
+
           # Helper: remove SDL2 android-project from all locations
           remove_sdl2_android_project() {
             for ROOT in .buildozer "$HOME/.buildozer"; do
@@ -324,12 +341,14 @@ jobs:
           # Patch templates and manifests before the first attempt
           echo "=== Pre-build manifest patching ==="
           patch_manifests
+          upgrade_gradle_wrapper
 
           buildozer android debug || {
             echo ""
             echo "=== Build failed – cleaning up and retrying ==="
             remove_sdl2_android_project
             patch_manifests
+            upgrade_gradle_wrapper
             # Clean Gradle build cache so it doesn't remember android-project
             find .buildozer -name "build" -path "*/dists/*/build" -type d \
               -exec rm -rf {} + 2>/dev/null || true
@@ -366,6 +385,7 @@ jobs:
             echo "=== Manifest was overwritten — rebuilding APK via Gradle ==="
             # Remove SDL2 android-project BEFORE Gradle rebuild
             remove_sdl2_android_project
+            upgrade_gradle_wrapper
             GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1)
             if [ -n "$GRADLEW" ]; then
               DIST_DIR=$(dirname "$GRADLEW")
@@ -468,6 +488,11 @@ jobs:
           # complain about "different paths to the SDK".
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           # Do NOT set JAVA_TOOL_OPTIONS – sdkmanager (Java 8) would reject --add-opens
+          # Upgrade Gradle wrapper so it can parse the runner's Java 17.x version
+          find .buildozer "$HOME/.buildozer" -name "gradle-wrapper.properties" 2>/dev/null | \
+            while read -r gw; do
+              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.4-all.zip|' "$gw"
+            done || true
           cd "$DIST_DIR"
           chmod +x gradlew
           ./gradlew clean assembleDebug --info --stacktrace > /tmp/gradle-out.txt 2>&1 || true
