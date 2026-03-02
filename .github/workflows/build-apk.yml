@@ -274,22 +274,38 @@ jobs:
         run: |
           # -------------------------------------------------------------- #
           # Helper: inject android:usesCleartextTraffic="true" into every
-          # dist AndroidManifest.xml that doesn't already have it.
+          # AndroidManifest.xml AND p4a template that doesn't already have it.
           # This works around buildozer 1.5.0 bug #1611 which breaks the
           # android.extra_manifest_application_arguments option.
+          #
+          # We patch THREE locations to cover all build scenarios:
+          #   1. p4a bootstrap templates (*.tmpl.xml) — so new dists get it
+          #   2. dist AndroidManifest.xml — for warm-cache builds
+          #   3. src/main/AndroidManifest.xml — Gradle project copy
           # -------------------------------------------------------------- #
           patch_manifests() {
-            find .buildozer -name "AndroidManifest.xml" \
-                 -path "*/dists/*/AndroidManifest.xml" 2>/dev/null \
+            find .buildozer -name "AndroidManifest*.xml" \
+                 \( -path "*/dists/*" -o -path "*/templates/*" -o -path "*/src/main/*" \) \
+                 2>/dev/null \
             | while read -r f; do
                 if ! grep -q 'usesCleartextTraffic' "$f"; then
                   sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$f"
-                  echo "Patched usesCleartextTraffic in: $f"
+                  echo "  Patched: $f"
+                fi
+              done
+
+            # Also patch .tmpl.xml template files used by p4a to generate manifests
+            find .buildozer -name "AndroidManifest.tmpl.xml" 2>/dev/null \
+            | while read -r f; do
+                if ! grep -q 'usesCleartextTraffic' "$f"; then
+                  sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$f"
+                  echo "  Patched template: $f"
                 fi
               done
           }
 
-          # Patch manifests surviving from cache before the first attempt
+          # Patch templates and manifests before the first attempt
+          echo "=== Pre-build manifest patching ==="
           patch_manifests
 
           buildozer android debug || {
@@ -300,6 +316,50 @@ jobs:
               -exec rm -rf {} + 2>/dev/null || true
             buildozer android debug
           }
+
+          # -------------------------------------------------------------- #
+          # Post-build verification: if buildozer regenerated the dist from
+          # the template (e.g. after a version bump), the manifest may have
+          # been overwritten.  Detect this and rebuild just the APK via
+          # Gradle if needed.
+          # -------------------------------------------------------------- #
+          echo ""
+          echo "=== Post-build manifest verification ==="
+          NEEDS_REBUILD=false
+          find .buildozer -name "AndroidManifest.xml" \
+               \( -path "*/dists/*" -o -path "*/src/main/*" \) \
+               2>/dev/null \
+          | while read -r f; do
+              if ! grep -q 'usesCleartextTraffic' "$f"; then
+                echo "  MISSING usesCleartextTraffic in: $f"
+                sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$f"
+                echo "  Fixed: $f"
+                echo "true" > /tmp/_needs_rebuild
+              else
+                echo "  OK: $f"
+              fi
+            done
+
+          if [ -f /tmp/_needs_rebuild ]; then
+            echo ""
+            echo "=== Manifest was overwritten — rebuilding APK via Gradle ==="
+            GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1)
+            if [ -n "$GRADLEW" ]; then
+              DIST_DIR=$(dirname "$GRADLEW")
+              cd "$DIST_DIR"
+              chmod +x gradlew
+              ./gradlew assembleDebug
+              cd -
+              # Copy rebuilt APK back to bin/
+              find .buildozer -name "*-debug.apk" -newer "$GRADLEW" 2>/dev/null | head -1 | \
+                while read apk; do
+                  mkdir -p bin
+                  cp "$apk" bin/
+                  echo "Copied rebuilt APK: $apk → bin/"
+                done
+            fi
+            rm -f /tmp/_needs_rebuild
+          fi
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
