@@ -398,20 +398,24 @@ jobs:
             remove_sdl2_android_project
             upgrade_gradle_wrapper
             fix_libwebp_gradle
-            GRADLEW=$(find .buildozer -path "*/dists/*/gradlew" -type f 2>/dev/null | head -1)
+            GRADLEW=$(find .buildozer -regextype posix-extended -regex '.*/dists/[^/]+/gradlew' -type f 2>/dev/null | head -1)
             if [ -n "$GRADLEW" ]; then
               DIST_DIR=$(dirname "$GRADLEW")
               cd "$DIST_DIR"
               chmod +x gradlew
-              ./gradlew assembleDebug
-              cd -
-              # Copy rebuilt APK back to bin/
-              find .buildozer -name "*-debug.apk" -newer "$GRADLEW" 2>/dev/null | head -1 | \
-                while read apk; do
-                  mkdir -p bin
-                  cp "$apk" bin/
-                  echo "Copied rebuilt APK: $apk → bin/"
-                done || true
+              if ./gradlew assembleDebug; then
+                cd -
+                # Copy rebuilt APK back to bin/
+                find .buildozer -name "*-debug.apk" -newer "$GRADLEW" 2>/dev/null | head -1 | \
+                  while read apk; do
+                    mkdir -p bin
+                    cp "$apk" bin/
+                    echo "Copied rebuilt APK: $apk → bin/"
+                  done || true
+              else
+                echo "::warning::Post-build Gradle rebuild failed (non-fatal). Using APK from main build."
+                cd -
+              fi
             fi
             rm -f /tmp/_needs_rebuild
           fi
@@ -430,7 +434,7 @@ jobs:
       - name: Diagnose build failure
         if: failure()
         run: |
-          GRADLEW=$(find .buildozer -path "*/dists/*/gradlew" -type f 2>/dev/null | head -1 || true)
+          GRADLEW=$(find .buildozer -regextype posix-extended -regex '.*/dists/[^/]+/gradlew' -type f 2>/dev/null | head -1 || true)
           if [ -z "$GRADLEW" ]; then
             echo "gradlew not found – build failed before the Gradle distribution was created."
             echo "Check the sdkmanager / Python compilation steps above for the real error."
