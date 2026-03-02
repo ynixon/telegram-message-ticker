@@ -186,3 +186,4 @@ jobs:
 | App shows blank screen on device | Run `adb logcat \*:S python:D` to see Python tracebacks. |
 | Telethon auth loop hangs | Make sure `phone_number` is set correctly in the setup screen. |
 | WebView shows "connection refused" | The Flask server needs a few seconds to start — the loading screen retries automatically. |
+| APK upgrade fails / garbled error on install | The signing certificate changed between builds (GitHub Actions cache was evicted). **Fix:** uninstall the old app, install the new APK. **Prevent:** save the debug keystore as a base64-encoded GitHub secret `DEBUG_KEYSTORE_BASE64` — see workflow comments for instructions. |
