@@ -396,11 +396,18 @@ jobs:
             echo "=== Manifest was overwritten — rebuilding APK via Gradle ==="
             # Remove SDL2 android-project BEFORE Gradle rebuild
             remove_sdl2_android_project
-            upgrade_gradle_wrapper
             fix_libwebp_gradle
             GRADLEW=$(find .buildozer -regextype posix-extended -regex '.*/dists/[^/]+/gradlew' -type f 2>/dev/null | head -1)
             if [ -n "$GRADLEW" ]; then
               DIST_DIR=$(dirname "$GRADLEW")
+              # The dist's AGP (Android Gradle Plugin) may require Gradle 8.0+.
+              # The pre-build step uses 7.6.4 (for Java 17.0.18 compat), but
+              # after the main build AGP may have been updated.  Upgrade to 8.7.
+              WRAPPER_PROPS="$DIST_DIR/gradle/wrapper/gradle-wrapper.properties"
+              if [ -f "$WRAPPER_PROPS" ]; then
+                sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' "$WRAPPER_PROPS"
+                echo "  Upgraded dist Gradle wrapper to 8.7 for AGP compat"
+              fi
               cd "$DIST_DIR"
               chmod +x gradlew
               if ./gradlew assembleDebug; then
@@ -506,7 +513,7 @@ jobs:
           # Upgrade Gradle wrapper and fix libwebp before running gradlew
           find .buildozer "$HOME/.buildozer" -name "gradle-wrapper.properties" 2>/dev/null | \
             while read -r gw; do
-              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.4-all.zip|' "$gw"
+              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' "$gw"
             done || true
           find .buildozer -path "*/libwebp/build.gradle" 2>/dev/null | \
             while read -r f; do
