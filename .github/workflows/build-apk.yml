@@ -250,9 +250,30 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Build debug APK
         run: |
+          # -------------------------------------------------------------- #
+          # Helper: inject android:usesCleartextTraffic="true" into every
+          # dist AndroidManifest.xml that doesn't already have it.
+          # This works around buildozer 1.5.0 bug #1611 which breaks the
+          # android.extra_manifest_application_arguments option.
+          # -------------------------------------------------------------- #
+          patch_manifests() {
+            find .buildozer -name "AndroidManifest.xml" \
+                 -path "*/dists/*/AndroidManifest.xml" 2>/dev/null \
+            | while read -r f; do
+                if ! grep -q 'usesCleartextTraffic' "$f"; then
+                  sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$f"
+                  echo "Patched usesCleartextTraffic in: $f"
+                fi
+              done
+          }
+
+          # Patch manifests surviving from cache before the first attempt
+          patch_manifests
+
           buildozer android debug || {
             echo ""
-            echo "=== Build failed – removing SDL2 android-project and retrying ==="
+            echo "=== Build failed – patching manifests & removing SDL2 android-project, then retrying ==="
+            patch_manifests
             find .buildozer -path "*/jni/SDL/android-project" -type d \
               -exec rm -rf {} + 2>/dev/null || true
             buildozer android debug

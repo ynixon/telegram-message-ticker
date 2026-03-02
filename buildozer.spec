@@ -89,9 +89,13 @@ android.archs = arm64-v8a, armeabi-v7a
 # Android 9+ blocks HTTP (cleartext) traffic by default, including to localhost.
 # The app runs a local Flask server on http://127.0.0.1:3005 and opens it in a
 # WebView, so cleartext traffic must be explicitly permitted for the loopback
-# interface.  This injects android:usesCleartextTraffic="true" into the
-# <application> element of AndroidManifest.xml.
-android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
+# interface.
+#
+# NOTE: android.extra_manifest_application_arguments is broken in buildozer
+# 1.5.0 (https://github.com/kivy/buildozer/issues/1611) — it wraps the file
+# content in double-quotes, producing invalid XML.  Instead, the CI workflow
+# patches AndroidManifest.xml directly via sed after the dist is created.
+# android.extra_manifest_application_arguments = %(source.dir)s/extra_manifest_application.txt
 
 # greenlet 2.x (required for Python 3.11) is a C++ extension that links
 # against libc++_shared.so (the NDK shared C++ STL).  Android does not
