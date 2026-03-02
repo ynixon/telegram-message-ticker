@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk openjdk-11-jdk \
+            git zip unzip openjdk-17-jdk \
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
@@ -97,17 +97,11 @@ jobs:
             rm -rf /tmp/cmdtools.zip /tmp/cmdtools_extracted
           fi
 
-          # Always ensure the legacy shim exists (needed even after cache restore).
-          # The shim explicitly sets JAVA_HOME to Java 17 because the build step
-          # uses Java 11 (compatible with Gradle 7.5) while sdkmanager (cmdline-tools)
-          # requires Java 17 (class file version 61).
+          # Always ensure the legacy shim exists (needed even after cache restore)
           mkdir -p "$SDK_DIR/tools/bin"
-          printf '%s\n' \
-            '#!/usr/bin/env bash' \
-            'export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' \
-            'exec "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$@"' \
-            > "$SDK_DIR/tools/bin/sdkmanager"
-          chmod +x "$SDK_DIR/tools/bin/sdkmanager"
+          if [ ! -f "$SDK_DIR/tools/bin/sdkmanager" ]; then
+            ln -sf "$SDKMANAGER" "$SDK_DIR/tools/bin/sdkmanager"
+          fi
 
           # Accept licences
           mkdir -p "$SDK_DIR/licenses"
@@ -327,15 +321,45 @@ jobs:
             done
           }
 
+          # Helper: upgrade Gradle wrapper to 7.6.4 (fixes Java 17.0.18 parsing)
+          upgrade_gradle_wrapper() {
+            for ROOT in .buildozer "$HOME/.buildozer"; do
+              [ -d "$ROOT" ] || continue
+              find "$ROOT" -name "gradle-wrapper.properties" 2>/dev/null \
+              | while read -r f; do
+                  sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.4-all.zip|' "$f"
+                  echo "  Upgraded Gradle wrapper: $f"
+                done || true
+            done
+          }
+
+          # Helper: remove the 'wrapper' task from libwebp's build.gradle.
+          # Gradle 7.6+ has a built-in 'wrapper' task; the duplicate in
+          # libwebp causes "Cannot add task 'wrapper' as a task with that
+          # name already exists".  libwebp is built via ndk-build, not Gradle,
+          # so its build.gradle is only evaluated when running gradlew from
+          # the dist root.
+          fix_libwebp_gradle() {
+            find .buildozer -path "*/libwebp/build.gradle" 2>/dev/null \
+            | while read -r f; do
+                if grep -q 'task wrapper' "$f"; then
+                  sed -i '/task wrapper/,/^}/d' "$f"
+                  echo "  Removed wrapper task from: $f"
+                fi
+              done || true
+          }
+
           # Patch templates and manifests before the first attempt
           echo "=== Pre-build manifest patching ==="
           patch_manifests
+          upgrade_gradle_wrapper
 
           buildozer android debug || {
             echo ""
             echo "=== Build failed – cleaning up and retrying ==="
             remove_sdl2_android_project
             patch_manifests
+            upgrade_gradle_wrapper
             # Clean Gradle build cache so it doesn't remember android-project
             find .buildozer -name "build" -path "*/dists/*/build" -type d \
               -exec rm -rf {} + 2>/dev/null || true
@@ -372,6 +396,8 @@ jobs:
             echo "=== Manifest was overwritten — rebuilding APK via Gradle ==="
             # Remove SDL2 android-project BEFORE Gradle rebuild
             remove_sdl2_android_project
+            upgrade_gradle_wrapper
+            fix_libwebp_gradle
             GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1)
             if [ -n "$GRADLEW" ]; then
               DIST_DIR=$(dirname "$GRADLEW")
@@ -390,7 +416,7 @@ jobs:
             rm -f /tmp/_needs_rebuild
           fi
         env:
-          JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       # ------------------------------------------------------------------ #
       # 7b. Diagnose build failures
@@ -468,11 +494,20 @@ jobs:
 
           echo ""
           echo "=== gradlew clean assembleDebug --info --stacktrace ==="
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           # ANDROID_HOME is already exported from $GITHUB_ENV (set in step 5).
           # Also set ANDROID_SDK_ROOT to the same value so Gradle does not
           # complain about "different paths to the SDK".
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          # Upgrade Gradle wrapper and fix libwebp before running gradlew
+          find .buildozer "$HOME/.buildozer" -name "gradle-wrapper.properties" 2>/dev/null | \
+            while read -r gw; do
+              sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.4-all.zip|' "$gw"
+            done || true
+          find .buildozer -path "*/libwebp/build.gradle" 2>/dev/null | \
+            while read -r f; do
+              sed -i '/task wrapper/,/^}/d' "$f"
+            done || true
           cd "$DIST_DIR"
           chmod +x gradlew
           ./gradlew clean assembleDebug --info --stacktrace > /tmp/gradle-out.txt 2>&1 || true
