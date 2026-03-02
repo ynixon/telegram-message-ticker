@@ -97,11 +97,17 @@ jobs:
             rm -rf /tmp/cmdtools.zip /tmp/cmdtools_extracted
           fi
 
-          # Always ensure the legacy shim exists (needed even after cache restore)
+          # Always ensure the legacy shim exists (needed even after cache restore).
+          # The shim explicitly sets JAVA_HOME to Java 17 because the build step
+          # uses Java 11 (compatible with Gradle 7.5) while sdkmanager (cmdline-tools)
+          # requires Java 17 (class file version 61).
           mkdir -p "$SDK_DIR/tools/bin"
-          if [ ! -f "$SDK_DIR/tools/bin/sdkmanager" ]; then
-            ln -sf "$SDKMANAGER" "$SDK_DIR/tools/bin/sdkmanager"
-          fi
+          cat > "$SDK_DIR/tools/bin/sdkmanager" << 'SHIMEOF'
+#!/usr/bin/env bash
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+exec "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$@"
+SHIMEOF
+          chmod +x "$SDK_DIR/tools/bin/sdkmanager"
 
           # Accept licences
           mkdir -p "$SDK_DIR/licenses"
