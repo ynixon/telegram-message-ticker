@@ -568,24 +568,25 @@ jobs:
         run: |
           APK="bin/telegram-message-ticker-debug.apk"
 
-          # Install apktool; zipalign comes from Android SDK build-tools
-          sudo apt-get update -qq && sudo apt-get install -y -qq apktool > /dev/null 2>&1 || {
-            # Fallback: download apktool jar directly
-            APKTOOL_VER="2.9.3"
-            curl -sL "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" -o /tmp/apktool.jar
-            apktool() { java -jar /tmp/apktool.jar "$@"; }
-          }
-          # Find zipalign from build-tools
-          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -name "zipalign" -type f 2>/dev/null | sort -V | tail -1)
-          if [ -z "$ZIPALIGN" ]; then
-            echo "::error::zipalign not found in build-tools"
-            exit 1
-          fi
+          # Download apktool jar directly (Ubuntu apt has ancient 2.5.0 with broken aapt)
+          APKTOOL_VER="2.9.3"
+          echo "Downloading apktool ${APKTOOL_VER}..."
+          curl -sL "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" \
+            -o /tmp/apktool.jar
+          apktool() { java -jar /tmp/apktool.jar "$@"; }
+
+          # Locate build-tools (aapt2, zipalign, apksigner)
+          BT=$(ls -d "$ANDROID_HOME/build-tools/"* 2>/dev/null | sort -V | tail -1)
+          echo "Build-tools: $BT"
+          export PATH="$BT:$PATH"
 
           echo "=== Decoding APK ==="
           apktool d -f -o /tmp/apk-decoded "$APK"
 
           MANIFEST="/tmp/apk-decoded/AndroidManifest.xml"
+          echo "--- Decoded manifest ---"
+          cat "$MANIFEST"
+
           if grep -q 'usesCleartextTraffic="true"' "$MANIFEST"; then
             echo "✓ usesCleartextTraffic already present — no patching needed"
           else
@@ -594,22 +595,16 @@ jobs:
             echo "  Patched manifest:"
             grep -n 'usesCleartextTraffic' "$MANIFEST" || true
 
-            echo "=== Rebuilding APK ==="
-            apktool b /tmp/apk-decoded -o /tmp/patched-unsigned.apk
+            echo "=== Rebuilding APK with aapt2 ==="
+            apktool b --use-aapt2 /tmp/apk-decoded -o /tmp/patched-unsigned.apk
 
             echo "=== Zipaligning ==="
-            "$ZIPALIGN" -f 4 /tmp/patched-unsigned.apk /tmp/patched-aligned.apk
+            zipalign -f 4 /tmp/patched-unsigned.apk /tmp/patched-aligned.apk
 
             echo "=== Re-signing with debug keystore ==="
-            # Use apksigner from the Android SDK build-tools
-            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" -type f 2>/dev/null | sort -V | tail -1)
-            if [ -z "$APKSIGNER" ]; then
-              echo "::error::apksigner not found in build-tools"
-              exit 1
-            fi
             KS="debug.keystore"
             [ -f "$KS" ] || KS="$HOME/.android/debug.keystore"
-            "$APKSIGNER" sign \
+            apksigner sign \
               --ks "$KS" \
               --ks-key-alias androiddebugkey \
               --ks-pass pass:android \
@@ -625,6 +620,8 @@ jobs:
           apktool d -f -o /tmp/apk-verify "$APK"
           if grep -q 'usesCleartextTraffic="true"' /tmp/apk-verify/AndroidManifest.xml; then
             echo "✓ CONFIRMED: usesCleartextTraffic=\"true\" is in the final APK"
+            echo "--- Final manifest ---"
+            cat /tmp/apk-verify/AndroidManifest.xml
           else
             echo "::error::usesCleartextTraffic still missing after patching!"
             cat /tmp/apk-verify/AndroidManifest.xml
