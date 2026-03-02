@@ -63,9 +63,9 @@ jobs:
           path: |
             ~/.buildozer
             ~/.gradle/wrapper
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            buildozer-v2-${{ runner.os }}-
 
       # ------------------------------------------------------------------ #
       # 5. Pre-install Android SDK command-line tools + legacy shim
@@ -213,6 +213,27 @@ jobs:
           echo "Patched $COUNT file(s).  (0 is OK on a cold cache.)"
 
       # ------------------------------------------------------------------ #
+      # 6d. Remove SDL2 android-project example from dist
+      #
+      #     SDL2 2.28+ ships an android-project/ directory inside its
+      #     source tree containing a complete Gradle project (its own
+      #     settings.gradle, app/build.gradle with externalNativeBuild).
+      #     When python-for-android copies SDL2 into the dist's jni/SDL/
+      #     directory, Gradle's AGP discovers the example project and
+      #     tries to build it with ndk-build using the EXAMPLE Android.mk
+      #     instead of p4a's top-level one, causing:
+      #       [CXX1429] Module main depends on undefined modules: SDL2
+      #     Removing android-project/ from the cached dist prevents this.
+      #     On cold cache the directory doesn't exist yet (no-op); the
+      #     build step below retries after cleanup for that case.
+      # ------------------------------------------------------------------ #
+      - name: Remove SDL2 android-project from dist (warm cache)
+        run: |
+          find .buildozer -path "*/jni/SDL/android-project" -type d \
+            -exec rm -rf {} + 2>/dev/null || true
+          echo "Cleaned SDL2 android-project dirs from cached dist."
+
+      # ------------------------------------------------------------------ #
       # 7. Build debug APK
       #
       #    NOTE: Do NOT set JAVA_TOOL_OPTIONS here.  That variable is
@@ -221,9 +242,42 @@ jobs:
       #    cause sdkmanager to crash with "Unrecognized option".
       #    p4a uses Gradle 8.x which supports Java 17 natively — no
       #    extra JVM flags are needed.
+      #
+      #    On a cold cache the first attempt creates the p4a dist (which
+      #    re-extracts SDL2 with android-project/) and the Gradle build
+      #    fails.  The retry removes android-project/ and re-runs; the
+      #    dist already exists so buildozer skips straight to Gradle.
       # ------------------------------------------------------------------ #
       - name: Build debug APK
-        run: buildozer android debug
+        run: |
+          # -------------------------------------------------------------- #
+          # Helper: inject android:usesCleartextTraffic="true" into every
+          # dist AndroidManifest.xml that doesn't already have it.
+          # This works around buildozer 1.5.0 bug #1611 which breaks the
+          # android.extra_manifest_application_arguments option.
+          # -------------------------------------------------------------- #
+          patch_manifests() {
+            find .buildozer -name "AndroidManifest.xml" \
+                 -path "*/dists/*/AndroidManifest.xml" 2>/dev/null \
+            | while read -r f; do
+                if ! grep -q 'usesCleartextTraffic' "$f"; then
+                  sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$f"
+                  echo "Patched usesCleartextTraffic in: $f"
+                fi
+              done
+          }
+
+          # Patch manifests surviving from cache before the first attempt
+          patch_manifests
+
+          buildozer android debug || {
+            echo ""
+            echo "=== Build failed – patching manifests & removing SDL2 android-project, then retrying ==="
+            patch_manifests
+            find .buildozer -path "*/jni/SDL/android-project" -type d \
+              -exec rm -rf {} + 2>/dev/null || true
+            buildozer android debug
+          }
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
@@ -268,7 +322,41 @@ jobs:
           done
 
           echo ""
-          echo "=== gradlew clean assembleDebug --stacktrace ==="
+          echo "=== ndk-build direct test (reveals the actual C++ configure error) ==="
+          NDK_BUILD=$(find .buildozer -name "ndk-build" -not -path "*/test/*" \
+                        -type f 2>/dev/null | head -1 || true)
+          ANDROID_MK=$(find .buildozer \
+                         -path "*/jni/SDL/android-project/app/jni/Android.mk" \
+                         2>/dev/null | head -1 || true)
+          APPLICATION_MK=$(find .buildozer \
+                             -path "*/jni/SDL/android-project/app/jni/Application.mk" \
+                             2>/dev/null | head -1 || true)
+          if [ -n "$NDK_BUILD" ] && [ -n "$ANDROID_MK" ]; then
+            echo "NDK_BUILD: $NDK_BUILD"
+            echo "ANDROID_MK: $ANDROID_MK"
+            echo "--- Application.mk ---"
+            cat "$APPLICATION_MK" 2>/dev/null || echo "(not found)"
+            echo "--- Android.mk (first 30 lines) ---"
+            head -30 "$ANDROID_MK" 2>/dev/null || true
+            echo "--- ndk-build output ---"
+            "$NDK_BUILD" \
+              NDK_ALL_ABIS=arm64-v8a \
+              APP_ABI=arm64-v8a \
+              NDK_APPLICATION_MK="$APPLICATION_MK" \
+              APP_BUILD_SCRIPT="$ANDROID_MK" \
+              NDK_PROJECT_PATH=null \
+              V=1 2>&1 | tee /tmp/ndkbuild-out.txt | head -60 || true
+            grep -E "error:|Error:|make:|warning:" /tmp/ndkbuild-out.txt 2>/dev/null | head -20 | \
+              while IFS= read -r line; do
+                echo "::warning::NDK: $(echo "$line" | sed 's/[%]/%25/g')"
+              done || true
+          else
+            echo "::error::ndk-build or Android.mk not found"
+            echo "NDK_BUILD=$NDK_BUILD  ANDROID_MK=$ANDROID_MK"
+          fi
+
+          echo ""
+          echo "=== gradlew clean assembleDebug --info --stacktrace ==="
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           # ANDROID_HOME is already exported from $GITHUB_ENV (set in step 5).
           # Also set ANDROID_SDK_ROOT to the same value so Gradle does not
@@ -277,51 +365,31 @@ jobs:
           # Do NOT set JAVA_TOOL_OPTIONS – sdkmanager (Java 8) would reject --add-opens
           cd "$DIST_DIR"
           chmod +x gradlew
-          ./gradlew clean assembleDebug --stacktrace > /tmp/gradle-out.txt 2>&1 || true
+          ./gradlew clean assembleDebug --info --stacktrace > /tmp/gradle-out.txt 2>&1 || true
           TOTAL=$(wc -l < /tmp/gradle-out.txt)
           echo "Total Gradle output lines: $TOTAL"
           echo ""
-          echo "--- First 200 lines ---"
-          head -200 /tmp/gradle-out.txt
+          echo "--- First 150 lines ---"
+          head -150 /tmp/gradle-out.txt
           echo ""
-          echo "--- Last 300 lines ---"
-          tail -300 /tmp/gradle-out.txt
+          echo "--- Last 400 lines ---"
+          tail -400 /tmp/gradle-out.txt
 
-          # Emit the actual failure reason as ::error:: annotations.
-          # These are accessible via the GitHub REST API check-runs endpoint
-          # even when the full log blob is unreachable.
+          # Annotations: failing task + "What went wrong" block
           echo ""
-          echo "=== GitHub Annotations (failure reason) ==="
-
-          # 1. Which task failed?
+          echo "=== GitHub Annotations ==="
           grep -E "FAILED$" /tmp/gradle-out.txt 2>/dev/null | head -5 | \
             while IFS= read -r line; do
               echo "::error::FAILED TASK: $(echo "$line" | sed 's/[%]/%25/g')"
             done || true
-
-          # 2. The "What went wrong" block (the real error message)
-          python3 - /tmp/gradle-out.txt << 'PYEOF'
-import sys
-lines = open(sys.argv[1]).readlines()
-# Locate "* What went wrong:" and emit next 25 lines as annotations
-for i, l in enumerate(lines):
-    if '* What went wrong:' in l:
-        for j in range(i, min(len(lines), i + 25)):
-            msg = lines[j].rstrip()
-            if msg:
-                msg = msg.replace('%', '%25')
-                print(f'::error::{msg}')
-        sys.exit(0)
-# Fallback: emit the last occurrence of "Caused by:"
-for i in range(len(lines) - 1, -1, -1):
-    if 'Caused by:' in lines[i]:
-        for j in range(max(0, i - 2), min(len(lines), i + 10)):
-            msg = lines[j].rstrip()
-            if msg:
-                print(f'::error::{msg}')
-        sys.exit(0)
-print('::error::Could not locate "What went wrong" or "Caused by:" in Gradle output')
-PYEOF
+          awk '
+            /^\* What went wrong:/ { found=1; count=0 }
+            /^\* Try:/             { if (found) found=0 }
+            found && count < 25 {
+              msg = $0; gsub(/%/, "%25", msg)
+              print "::error::" msg; count++
+            }
+          ' /tmp/gradle-out.txt 2>/dev/null | grep -v "^::error::$" || true
 
       # ------------------------------------------------------------------ #
       # 8. Rename artifact to something meaningful
