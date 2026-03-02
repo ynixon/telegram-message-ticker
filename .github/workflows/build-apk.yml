@@ -398,7 +398,7 @@ jobs:
             remove_sdl2_android_project
             upgrade_gradle_wrapper
             fix_libwebp_gradle
-            GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1)
+            GRADLEW=$(find .buildozer -path "*/dists/*/gradlew" -type f 2>/dev/null | head -1)
             if [ -n "$GRADLEW" ]; then
               DIST_DIR=$(dirname "$GRADLEW")
               cd "$DIST_DIR"
@@ -430,7 +430,7 @@ jobs:
       - name: Diagnose build failure
         if: failure()
         run: |
-          GRADLEW=$(find .buildozer -name "gradlew" -type f 2>/dev/null | head -1 || true)
+          GRADLEW=$(find .buildozer -path "*/dists/*/gradlew" -type f 2>/dev/null | head -1 || true)
           if [ -z "$GRADLEW" ]; then
             echo "gradlew not found – build failed before the Gradle distribution was created."
             echo "Check the sdkmanager / Python compilation steps above for the real error."
