@@ -185,14 +185,9 @@ $(document).ready(function () {
 
     // Listen for initial messages from server
     socket.on('initial_messages', function (data) {
-        if (!hasInitialMessagesLoaded) {
-            console.debug("Received initial messages:", data);
-            addMessages(data.messages);
-            console.log("Number of initial messages received:", data.messages.length);
-            hasInitialMessagesLoaded = true; // Mark initial messages as loaded
-        } else {
-            console.warn("Initial messages already processed. Skipping...");
-        }
+        console.debug("Received initial messages:", data);
+        addMessages(data.messages);
+        console.log("Number of initial messages received:", data.messages.length);
     });
 
     // Handle incoming new messages
@@ -359,7 +354,7 @@ $(document).ready(function () {
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
-        location.reload();
+        socket.emit('request_messages');
     });
 
     function changeLanguage(lang) {

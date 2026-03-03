@@ -577,6 +577,10 @@ async def get_latest_messages_once(telegram_client, cfg):
         # Mark the initial fetch as done
         INITIAL_FETCH_DONE = True
 
+        # Broadcast fetched messages to any already-connected WebView clients
+        # (the WebView may have connected before messages were ready).
+        _broadcast_current_messages()
+
     except Exception as err:
         logger.error("Error fetching messages: %s", err)
 
@@ -638,6 +642,25 @@ def fetch_title():
         return jsonify({"error": "Failed to fetch title"}), 500
 
 
+def _broadcast_current_messages():
+    """Broadcast the current LATEST_MESSAGES to all connected Socket.IO clients."""
+    with messages_lock:
+        valid_messages = [
+            {
+                "id": data["id"],
+                "channel": data["channel"],
+                "message": data["message"],
+                "time": data["time"],
+                "is_push": data.get("is_push", False),
+            }
+            for data in LATEST_MESSAGES
+            if data["message"]
+        ]
+    if valid_messages:
+        logger.info("Broadcasting %d messages to all connected clients.", len(valid_messages))
+        socketio.emit("initial_messages", {"messages": valid_messages})
+
+
 @socketio.on("connect")
 def handle_connect(auth):
     """Handle a new client connection via SocketIO."""
@@ -659,6 +682,13 @@ def handle_connect(auth):
         "Valid messages being sent: %s", json.dumps(valid_messages, ensure_ascii=False)
     )
     emit("initial_messages", {"messages": valid_messages})
+
+
+@socketio.on("request_messages")
+def handle_request_messages():
+    """Client explicitly requests the current message list (e.g. refresh button)."""
+    logger.info("Client requested messages refresh.")
+    _broadcast_current_messages()
 
 
 @socketio.on("disconnect")
