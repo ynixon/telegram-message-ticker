@@ -154,31 +154,13 @@ body {
     margin: 20px;
 }
 
-/* Instagram-style navigation touch zones */
+/* Instagram-style navigation — touch zones detected via JS on #messages */
 #messages {
     position: relative;
-}
-
-.nav-zone {
-    position: absolute;
-    top: 0;
-    bottom: 60px; /* leave room for time + button */
-    width: 30%;
-    z-index: 10;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-}
-
-.nav-left {
-    left: 0;
-}
-
-.nav-right {
-    right: 0;
-}
-
-.nav-zone:active {
-    background: rgba(255, 255, 255, 0.05);
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #message-counter {

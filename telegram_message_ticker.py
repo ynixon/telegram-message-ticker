@@ -47,6 +47,12 @@ INITIAL_FETCH_DONE = False
 INITIAL_FETCH_LOGGED = False
 _last_status_msg = "Starting…"
 
+# Channel names (or substrings) to exclude from auto-discovery
+EXCLUDED_CHANNEL_NAMES = [
+    "התרעות על שיגורים",
+    "פיקוד העורף",
+]
+
 
 # Initialize logging with timestamps
 logging.basicConfig(
@@ -219,6 +225,7 @@ async def auto_discover_channels(telegram_client, channels_file):
     
     Writes the discovered channels to channels_file and returns the list.
     Only includes broadcast channels (not groups, DMs, etc.).
+    Skips channels whose names match EXCLUDED_CHANNEL_NAMES (substring match).
     """
     _status('Discovering your Telegram channels\u2026')
     try:
@@ -227,9 +234,13 @@ async def auto_discover_channels(telegram_client, channels_file):
         for dialog in dialogs:
             entity = dialog.entity
             if getattr(entity, 'broadcast', False):
+                name = dialog.name or f"Channel {dialog.id}"
+                if any(ex in name for ex in EXCLUDED_CHANNEL_NAMES):
+                    logger.info("Skipping excluded channel: %s", name)
+                    continue
                 channels.append({
                     "id": dialog.id,
-                    "name": dialog.name or f"Channel {dialog.id}",
+                    "name": name,
                 })
         if channels:
             with open(channels_file, 'w', encoding='utf-8') as f:

@@ -51,9 +51,6 @@
         <div id="message-text"></div>
         <div id="message-media"></div>
         <div id="message-time">{{ translations['message_time'] }}</div>
-        <!-- Navigation touch zones (Instagram-style) -->
-        <div id="nav-prev" class="nav-zone nav-left"></div>
-        <div id="nav-next" class="nav-zone nav-right"></div>
         <!-- Message counter -->
         <div id="message-counter"></div>
     </div>
@@ -122,17 +119,18 @@
             clearTimeout(timer);
             timer = setTimeout(showNext, 10000);
         }
-        // Navigation for vanilla fallback
-        var np = document.getElementById('nav-prev');
-        var nn = document.getElementById('nav-next');
-        if (np) np.addEventListener('click', function() {
+        // Navigation for vanilla fallback — tap left/right on #messages
+        var md2 = document.getElementById('messages');
+        if (md2) md2.addEventListener('click', function(e) {
             if (!fallbackActive || !msgs.length) return;
-            idx = (idx - 2 + msgs.length) % msgs.length;
-            clearTimeout(timer); showNext();
-        });
-        if (nn) nn.addEventListener('click', function() {
-            if (!fallbackActive || !msgs.length) return;
-            clearTimeout(timer); showNext();
+            var w = md2.offsetWidth;
+            var x = e.pageX - md2.getBoundingClientRect().left;
+            if (x < w * 0.35) {
+                idx = (idx - 2 + msgs.length) % msgs.length;
+                clearTimeout(timer); showNext();
+            } else if (x > w * 0.65) {
+                clearTimeout(timer); showNext();
+            }
         });
     })();
     </script>

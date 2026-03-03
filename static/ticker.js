@@ -84,9 +84,9 @@ $(document).ready(function () {
     
             // Show the next message if nothing is currently being displayed
             if (!isDisplaying && messages.length > 0) {
+                showMessage();  // renders content first
                 $("#loading-message").hide();
                 $("#messages").show();
-                showMessage();  
             }
     
             console.log(`Number of new messages added: ${newMessagesAdded}`);
@@ -370,17 +370,17 @@ $(document).ready(function () {
         showMessage();
     }
 
-    // Instagram-style tap navigation: left zone = previous, right zone = next
-    $("#nav-prev").on("click touchend", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        navigateMessage(-1);
-    });
-
-    $("#nav-next").on("click touchend", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        navigateMessage(1);
+    // Instagram-style tap navigation: detect touch position on #messages
+    // Left 35% = previous, Right 35% = next, Center = ignored (allows text selection)
+    $("#messages").on("click", function (e) {
+        if (messages.length === 0) return;
+        var containerWidth = $(this).width();
+        var clickX = e.pageX - $(this).offset().left;
+        if (clickX < containerWidth * 0.35) {
+            navigateMessage(-1);
+        } else if (clickX > containerWidth * 0.65) {
+            navigateMessage(1);
+        }
     });
 
     // Event listeners for UI interactions
