@@ -502,7 +502,7 @@ async def get_latest_messages_once(telegram_client, cfg):
 
             _status(f'Fetching from {channel_name}…')
             entity = await telegram_client.get_entity(channel_id)
-            messages = await telegram_client.get_messages(entity, limit=1)  # Fetch up to 1 message
+            messages = await telegram_client.get_messages(entity, limit=5)  # Fetch up to 5 messages per channel
             TOTAL_MESSAGES_FETCHED += len(messages)
             logger.info("Fetched %d message(s) from %s", len(messages), channel_name)
             _status(f'Got {len(messages)} message(s) from {channel_name}')
@@ -689,6 +689,29 @@ def handle_request_messages():
     """Client explicitly requests the current message list (e.g. refresh button)."""
     logger.info("Client requested messages refresh.")
     _broadcast_current_messages()
+
+
+@app.route("/api/messages")
+def api_messages():
+    """REST endpoint returning the current messages as JSON.
+
+    This serves as a reliable fallback for the Socket.IO broadcast which may
+    silently fail when emitted from the Telethon thread (no eventlet
+    monkey-patching, so cross-thread emit is unreliable).
+    """
+    with messages_lock:
+        valid = [
+            {
+                "id": data["id"],
+                "channel": data["channel"],
+                "message": data["message"],
+                "time": data["time"],
+                "media_type": data.get("media_type", "text"),
+            }
+            for data in LATEST_MESSAGES
+            if data["message"]
+        ]
+    return jsonify({"messages": valid, "count": len(valid), "fetch_done": INITIAL_FETCH_DONE})
 
 
 @socketio.on("disconnect")

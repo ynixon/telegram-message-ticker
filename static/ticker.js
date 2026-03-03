@@ -355,7 +355,32 @@ $(document).ready(function () {
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
         socket.emit('request_messages');
+        // HTTP fallback in case Socket.IO cross-thread emit fails
+        fetchMessagesViaHttp();
     });
+
+    // HTTP fallback for fetching messages (bypasses Socket.IO threading issues)
+    function fetchMessagesViaHttp() {
+        $.getJSON('/api/messages', function (data) {
+            if (data.messages && data.messages.length > 0) {
+                console.log("HTTP fallback: received " + data.messages.length + " messages");
+                addMessages(data.messages);
+            }
+        }).fail(function () {
+            console.warn("HTTP fallback: /api/messages request failed");
+        });
+    }
+
+    // Poll via HTTP if no messages arrive within 4 seconds (covers the
+    // race condition where WebView connects before Telethon finishes fetching).
+    var httpPollTimer = setInterval(function () {
+        if (messages.length === 0) {
+            console.log("No messages yet — polling via HTTP fallback");
+            fetchMessagesViaHttp();
+        } else {
+            clearInterval(httpPollTimer);
+        }
+    }, 4000);
 
     function changeLanguage(lang) {
         window.location.href = `/set_language/${lang}`;

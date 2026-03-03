@@ -277,7 +277,9 @@ class AuthScreen(BoxLayout):
     """Telegram verification-code or 2FA-password entry screen."""
 
     def __init__(self, kind, phone, on_submit, **kwargs):
-        super().__init__(orientation='vertical', padding=[30, 50, 30, 24], spacing=20, **kwargs)
+        super().__init__(orientation='vertical',
+                         padding=[dp(30), dp(50), dp(30), dp(24)],
+                         spacing=dp(20), **kwargs)
 
         if kind == 'code':
             title   = 'Verification Code'
@@ -294,15 +296,15 @@ class AuthScreen(BoxLayout):
             text=f'[b]{title}[/b]',
             markup=True,
             font_size='22sp',
-            size_hint_y=None, height=52,
+            size_hint_y=None, height=dp(52),
         ))
         self.add_widget(Label(
             text=desc,
             font_size='14sp',
             color=(0.8, 0.8, 0.8, 1),
             halign='center',
-            text_size=(Window.width - 60, None),
-            size_hint_y=None, height=64,
+            text_size=(Window.width - dp(60), None),
+            size_hint_y=None, height=dp(64),
         ))
 
         self._inp = TextInput(
@@ -314,14 +316,14 @@ class AuthScreen(BoxLayout):
             password=is_pw,
             multiline=False,
             font_size='22sp',
-            size_hint_y=None, height=64,
-            padding=[12, 16, 12, 16],
+            size_hint_y=None, height=dp(64),
+            padding=[dp(12), dp(16), dp(12), dp(16)],
         )
         self.add_widget(self._inp)
 
         btn = Button(
             text='Confirm',
-            size_hint_y=None, height=58,
+            size_hint_y=None, height=dp(58),
             font_size='17sp',
             background_color=(0.18, 0.55, 0.88, 1),
         )
@@ -332,7 +334,7 @@ class AuthScreen(BoxLayout):
             text='',
             color=(1, 0.35, 0.35, 1),
             font_size='13sp',
-            size_hint_y=None, height=36,
+            size_hint_y=None, height=dp(36),
         )
         self.add_widget(self._err)
         self.add_widget(Widget())
