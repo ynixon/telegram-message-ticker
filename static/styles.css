@@ -10,6 +10,7 @@ body {
     min-height: 100dvh; /* dynamic viewport height for mobile */
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 #ticker-container {
