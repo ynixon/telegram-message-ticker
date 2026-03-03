@@ -134,7 +134,7 @@ def run_server(cfg):
             list_channels=False,
             phone_number=str(cfg.get('phone_number', '')),
             media_folder=media_folder,
-            message_age_limit=int(cfg.get('message_age_limit', 2)),
+            message_age_limit=float(cfg.get('message_age_limit', 0.25)),
             session_file=session_file,
         )
 

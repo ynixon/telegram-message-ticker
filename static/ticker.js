@@ -1,6 +1,6 @@
 $(document).ready(function () {
-    // Corrected variable name for consistency
-    var message_age_limit_in_hours = 2; // in hours
+    // Message age limit in hours (0.25 = 15 minutes)
+    var message_age_limit_in_hours = 0.25;
     console.log("Message age limit set to:", message_age_limit_in_hours, "hours");
 
     // Socket.IO configuration with reconnection settings
@@ -21,8 +21,8 @@ $(document).ready(function () {
     var isConnected = true;  // Flag to track connection state
     var hasInitialMessagesLoaded = false; // Flag to prevent re-processing
 
-    // Set message_age_limit to 2 hours to match the server configuration
-    var message_age_limit = message_age_limit_in_hours; // in hours
+    // Set message_age_limit to match the server configuration (in hours)
+    var message_age_limit = message_age_limit_in_hours; // 0.25 = 15 minutes
 
     // Function to remove old messages
     function removeOldMessages() {
@@ -120,10 +120,10 @@ $(document).ready(function () {
         }
     });
 
-    // Listen for refresh events and reload the page when triggered
+    // Listen for refresh events — fetch new messages without clearing the screen
     socket.on('refresh', function (data) {
         console.log("Received refresh event from server:", data);
-        location.reload();  // Reload the page on refresh event
+        fetchMessagesViaHttp();  // Fetch fresh messages without reloading
     });
 
     // Handle disconnection

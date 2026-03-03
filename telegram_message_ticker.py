@@ -135,7 +135,7 @@ def load_translations(language):
 def delete_old_files(media_dir):
     """Delete media files older than the configured message age limit."""
     now = time.time()
-    message_age_limit_seconds = CONFIG.get("message_age_limit", 2) * 3600  # Convert hours to seconds
+    message_age_limit_seconds = CONFIG.get("message_age_limit", 0.25) * 3600  # Convert hours to seconds
     for filename in os.listdir(media_dir):
         file_path = os.path.join(media_dir, filename)
         if os.path.isfile(file_path):
@@ -157,7 +157,7 @@ def load_config(args=None):
         "media_folder": os.getenv("MEDIA_FOLDER", "media"),
         "channel_list_file": os.getenv("CHANNEL_LIST_FILE", "channels.json"),
         "phone_number": os.getenv("PHONE_NUMBER"),
-        "message_age_limit": int(os.getenv("MESSAGE_AGE_LIMIT", "2")),
+        "message_age_limit": float(os.getenv("MESSAGE_AGE_LIMIT", "0.25")),
         "default_language": os.getenv("DEFAULT_LANGUAGE", "en"),
         "secret_key": os.getenv("SECRET_KEY", "your_secret_key_here"),
     }
@@ -639,7 +639,7 @@ def display():
     translations = load_translations(language)
 
     # Ensure message_age_limit is retrieved from config
-    message_age_limit = CONFIG.get("message_age_limit", 2)  # Default to 2 hours if not defined
+    message_age_limit = CONFIG.get("message_age_limit", 0.25)  # Default 15 minutes
 
     return render_template("index.html", 
                            translations=translations, 
@@ -1191,7 +1191,7 @@ if __name__ == "__main__":
         parser.add_argument("--list-channels", action="store_true", help="List all available channels")
         parser.add_argument("--phone_number", type=str, help="Your phone number for user login")
         parser.add_argument("--media_folder", type=str, help="Directory for downloaded media files", default="media")
-        parser.add_argument("--message_age_limit", type=int, help="Maximum age of messages in hours", default=2)
+        parser.add_argument("--message_age_limit", type=float, help="Maximum age of messages in hours", default=0.25)
 
         args = parser.parse_args()
         main(args)

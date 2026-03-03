@@ -15,10 +15,10 @@
         var translations = {{ translations | tojson }};
         
         // Safely passing message_age_limit from the server to client in hours
-        var message_age_limit_in_hours = {{ message_age_limit | default(2) | tojson }};
+        var message_age_limit_in_hours = {{ message_age_limit | default(0.25) | tojson }};
         
-        // Convert message_age_limit from hours to minutes
-        var message_age_limit = message_age_limit_in_hours * 60;
+        // message_age_limit in hours (used by ticker.js for filtering)
+        var message_age_limit = message_age_limit_in_hours;
         
         // Define the changeLanguage function before it's used
         function changeLanguage(lang) {
