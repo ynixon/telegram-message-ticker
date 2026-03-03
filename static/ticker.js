@@ -385,9 +385,15 @@ $(document).ready(function () {
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
+        // Show brief "refreshing" indicator without clearing existing messages
+        var btn = $(this);
+        btn.prop('disabled', true).text('⟳ …');
         socket.emit('request_messages');
         // HTTP fallback in case Socket.IO cross-thread emit fails
         fetchMessagesViaHttp();
+        setTimeout(function() {
+            btn.prop('disabled', false).text(translations['refresh_feed'] || 'Refresh Feed');
+        }, 2000);
     });
 
     // HTTP fallback for fetching messages (bypasses Socket.IO threading issues)

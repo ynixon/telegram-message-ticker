@@ -64,6 +64,24 @@
     <!-- Refresh feed button -->
     <button id="refreshFeed">{{ translations['refresh_feed'] }}</button>
 
+    <!-- Intercept ALL link clicks inside the ticker to prevent the WebView
+         from navigating to external/non-http URLs (e.g. whatsapp://) which
+         crash the view and leave the user stuck. -->
+    <script>
+    document.addEventListener('click', function(e) {
+        var link = e.target.closest('a[href]');
+        if (!link) return;
+        var href = link.getAttribute('href') || '';
+        // Allow in-page anchors and local routes
+        if (href.charAt(0) === '#' || href.charAt(0) === '/') return;
+        // Allow localhost navigation (language switch etc.)
+        if (href.indexOf('localhost') !== -1 || href.indexOf('127.0.0.1') !== -1) return;
+        // Block everything else (external http, whatsapp://, tg://, etc.)
+        e.preventDefault();
+        e.stopPropagation();
+    }, true);
+    </script>
+
     <!-- Vanilla JS fallback: works even if CDN scripts (jQuery/Socket.IO) fail to load -->
     <script>
     (function() {

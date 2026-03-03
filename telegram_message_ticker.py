@@ -200,6 +200,10 @@ def load_config(args=None):
         mf = getattr(args, 'media_folder', None)
         if mf and os.path.isabs(mf):
             cfg['media_folder'] = mf
+        # Persistent session file path (Android stores in external app storage)
+        sf = getattr(args, 'session_file', None)
+        if sf:
+            cfg['session_file'] = sf
 
     # Make media_folder absolute relative to the config file's directory
     # (only when it is still a relative path after args override)
@@ -290,6 +294,11 @@ def load_channels(channel_list_file):
                     logger.warning("Channel without ID found: %s", channel_name)
             # Filter out channels with invalid/missing IDs
             channels = [ch for ch in channels if ch.get("id") is not None]
+            # Also filter out excluded channel names
+            channels = [
+                ch for ch in channels
+                if not any(ex in ch.get("name", "") for ex in EXCLUDED_CHANNEL_NAMES)
+            ]
             if not channels:
                 logger.warning("No valid channels found in %s — will try auto-discovery after login", channel_list_file)
             return channels
@@ -934,16 +943,9 @@ async def run_telethon_client(cfg):
         shutdown()
         return
 
-    # Determine session file path, prioritize current directory first
-    session_file = "user_session.session"
-
-    # Check in the current directory
-    if not os.path.exists(session_file):
-        logger.info("Session file not found in current directory, checking application directory...")
-
-        # Then check in application directory
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        session_file = os.path.join(current_dir, "user_session.session")
+    # Determine session file path — prefer the persistent-storage path set by
+    # the Android entry-point (main.py) so the session survives APK upgrades.
+    session_file = CONFIG.get("session_file", "user_session")
 
     TELEGRAM_CLIENT = TelegramClient(session_file, CONFIG["api_id"], CONFIG["api_hash"])
 

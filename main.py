@@ -104,6 +104,18 @@ def run_server(cfg):
         media_folder = os.path.join(get_app_storage(), 'media')
         os.makedirs(media_folder, exist_ok=True)
 
+        # Store Telethon session in persistent storage so it survives APK updates.
+        # Telethon appends ".session" automatically.
+        session_file = os.path.join(get_app_storage(), 'user_session')
+
+        # Migrate old session from app bundle directory to persistent storage
+        old_session = os.path.join(app_dir, 'user_session.session')
+        new_session = session_file + '.session'
+        if os.path.exists(old_session) and not os.path.exists(new_session):
+            import shutil
+            shutil.copy2(old_session, new_session)
+            logger.info("Migrated Telethon session to persistent storage")
+
         channels_file = os.path.join(get_app_storage(), 'channels.json')
         if not os.path.exists(channels_file):
             example = os.path.join(app_dir, 'channels.json.example')
@@ -123,6 +135,7 @@ def run_server(cfg):
             phone_number=str(cfg.get('phone_number', '')),
             media_folder=media_folder,
             message_age_limit=int(cfg.get('message_age_limit', 2)),
+            session_file=session_file,
         )
 
         from telegram_message_ticker import main as ticker_main
