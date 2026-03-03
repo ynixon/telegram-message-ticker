@@ -154,6 +154,40 @@ body {
     margin: 20px;
 }
 
+/* Instagram-style navigation touch zones */
+#messages {
+    position: relative;
+}
+
+.nav-zone {
+    position: absolute;
+    top: 0;
+    bottom: 60px; /* leave room for time + button */
+    width: 30%;
+    z-index: 10;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.nav-left {
+    left: 0;
+}
+
+.nav-right {
+    right: 0;
+}
+
+.nav-zone:active {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+#message-counter {
+    font-size: 12px;
+    color: #666;
+    text-align: center;
+    margin-top: 4px;
+}
+
 /* Language selector styles */
 #language-selector {
     position: absolute;

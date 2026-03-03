@@ -321,6 +321,9 @@ $(document).ready(function () {
 
             isDisplaying = true;
 
+            // Update message counter
+            $("#message-counter").text((currentIndex === 0 ? messages.length : currentIndex) + " / " + messages.length);
+
             clearTimeout(timeoutId);
             clearTimeout(backupTimeoutId);
 
@@ -346,6 +349,39 @@ $(document).ready(function () {
             showMessage();
         }
     }
+
+    // Navigate to a specific message by direction: -1 = previous, +1 = next
+    function navigateMessage(direction) {
+        if (messages.length === 0) return;
+
+        // currentIndex already points to the NEXT message to show (was incremented in showMessage)
+        // So the currently displayed message is at (currentIndex - 1)
+        // For "next": we want to show currentIndex (which showMessage will do)
+        // For "prev": we want to go back 2 from currentIndex
+        if (direction === -1) {
+            currentIndex = (currentIndex - 2 + messages.length) % messages.length;
+        }
+        // direction === +1: currentIndex already points to next, no adjustment needed
+
+        // Reset timers and show
+        clearTimeout(timeoutId);
+        clearTimeout(backupTimeoutId);
+        isDisplaying = false;
+        showMessage();
+    }
+
+    // Instagram-style tap navigation: left zone = previous, right zone = next
+    $("#nav-prev").on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateMessage(-1);
+    });
+
+    $("#nav-next").on("click touchend", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateMessage(1);
+    });
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {

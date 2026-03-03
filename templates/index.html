@@ -51,6 +51,11 @@
         <div id="message-text"></div>
         <div id="message-media"></div>
         <div id="message-time">{{ translations['message_time'] }}</div>
+        <!-- Navigation touch zones (Instagram-style) -->
+        <div id="nav-prev" class="nav-zone nav-left"></div>
+        <div id="nav-next" class="nav-zone nav-right"></div>
+        <!-- Message counter -->
+        <div id="message-counter"></div>
     </div>
     
     <!-- Push indicator and lost connection -->
@@ -108,12 +113,27 @@
             var ch = document.getElementById('channel-name');
             var tx = document.getElementById('message-text');
             var tm = document.getElementById('message-time');
+            var ct = document.getElementById('message-counter');
             if (ch) ch.textContent = m.channel || '';
             if (tx) tx.innerHTML = m.message || '';
             if (tm) tm.textContent = m.time || '';
+            if (ct) ct.textContent = (idx + 1) + ' / ' + msgs.length;
             idx++;
+            clearTimeout(timer);
             timer = setTimeout(showNext, 10000);
         }
+        // Navigation for vanilla fallback
+        var np = document.getElementById('nav-prev');
+        var nn = document.getElementById('nav-next');
+        if (np) np.addEventListener('click', function() {
+            if (!fallbackActive || !msgs.length) return;
+            idx = (idx - 2 + msgs.length) % msgs.length;
+            clearTimeout(timer); showNext();
+        });
+        if (nn) nn.addEventListener('click', function() {
+            if (!fallbackActive || !msgs.length) return;
+            clearTimeout(timer); showNext();
+        });
     })();
     </script>
 </body>
