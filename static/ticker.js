@@ -270,7 +270,7 @@ $(document).ready(function () {
             if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
                 $("#message-media").append(`
-                    <video controls playsinline preload="metadata" class="message-video">
+                    <video controls playsinline webkit-playsinline preload="auto" class="message-video">
                         <source src="${videoUrl}" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
@@ -449,14 +449,17 @@ $(document).ready(function () {
         }
     }, {passive: true});
 
+    // NOT passive — we MUST preventDefault for links to stop WebView navigation.
+    // We only call preventDefault selectively (links), never for videos/buttons.
     document.addEventListener('touchend', function(e) {
         if (_touchStartX === null) return;
         // Handle links directly on touchend (don't rely on click which may not fire)
         var link = _findLink(e.target);
         if (link) {
+            e.preventDefault();  // CRITICAL: stop WebView from navigating to the URL
             _touchStartX = null;
             _openExtLink(link.getAttribute('href'));
-            _touchNavigated = true;  // prevent click handler from also acting
+            _touchNavigated = true;
             return;
         }
         if (messages.length === 0) { _touchStartX = null; return; }
@@ -466,18 +469,23 @@ $(document).ready(function () {
         if (endX < w * 0.35) { navigateMessage(-1); _touchNavigated = true; }
         else if (endX > w * 0.65) { navigateMessage(1); _touchNavigated = true; }
         _touchStartX = null;
-    }, {passive: true});
+    }, {passive: false});
 
     document.addEventListener('click', function(e) {
-        if (_touchNavigated) { _touchNavigated = false; return; }
-        // Handle links via click (fallback for non-touch / desktop)
+        // Always prevent default navigation for links (even if touchend already handled it)
         var link = _findLink(e.target);
         if (link) {
             e.preventDefault();
-            _openExtLink(link.getAttribute('href'));
+            if (!_touchNavigated) {
+                _openExtLink(link.getAttribute('href'));
+            }
+            _touchNavigated = false;
             return;
         }
+        if (_touchNavigated) { _touchNavigated = false; return; }
         if (messages.length === 0) return;
+        // Don't navigate when clicking on interactive elements (video controls, buttons, etc.)
+        if (_isInteractive(e.target)) return;
         var w = window.innerWidth;
         var x = e.clientX;
         if (x < w * 0.35) navigateMessage(-1);
