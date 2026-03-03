@@ -75,30 +75,9 @@
         <img id="overlay-image" src="" style="max-width:95%; max-height:95%; object-fit:contain;">
     </div>
 
-    <!-- Intercept external link clicks: open them in the default browser
-         via intent:// scheme (works in Android WebView without custom WebViewClient). -->
+    <!-- Link handling is done in ticker.js (_openExtLink) to ensure it works
+         on both touch and click events, including Android WebView edge cases. -->
     <script>
-    document.addEventListener('click', function(e) {
-        var link = e.target.closest('a[href]');
-        if (!link) return;
-        var href = link.getAttribute('href') || '';
-        // Allow in-page anchors and local routes
-        if (href.charAt(0) === '#' || href.charAt(0) === '/') return;
-        // Allow localhost navigation (language switch etc.)
-        if (href.indexOf('localhost') !== -1 || href.indexOf('127.0.0.1') !== -1) return;
-        // Open external links in the device's default browser via server-side Intent
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        fetch('/api/open_url?url=' + encodeURIComponent(href))
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.status === 'fallback' && data.url) {
-                    window.open(data.url, '_blank');
-                }
-            })
-            .catch(function() { window.open(href, '_blank'); });
-    }, true);
 
     // Image lightbox overlay: fullscreen view of tapped images
     function openImageOverlay(src) {

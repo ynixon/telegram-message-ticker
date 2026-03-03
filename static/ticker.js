@@ -405,6 +405,7 @@ $(document).ready(function () {
     // so buttons, videos, links, and all other interactive elements work normally.
     var _touchStartX = null;
     var _touchNavigated = false;
+    var _lastLinkTime = 0;  // dedup timestamp for link opens
 
     function _isInteractive(el) {
         while (el && el !== document.body && el !== document.documentElement) {
@@ -417,6 +418,30 @@ $(document).ready(function () {
         return false;
     }
 
+    // Open external links via server-side Android Intent (or fallback)
+    function _openExtLink(href) {
+        if (!href) return;
+        if (href.charAt(0) === '#' || href.charAt(0) === '/') return;
+        if (href.indexOf('localhost') !== -1 || href.indexOf('127.0.0.1') !== -1) return;
+        var now = Date.now();
+        if (now - _lastLinkTime < 1500) return;  // dedup
+        _lastLinkTime = now;
+        console.log("Opening external link:", href);
+        fetch('/api/open_url?url=' + encodeURIComponent(href))
+            .then(function(r) { return r.json(); })
+            .then(function(d) { if (d.status === 'fallback' && d.url) window.open(d.url, '_blank'); })
+            .catch(function() { window.open(href, '_blank'); });
+    }
+
+    // Find closest <a> ancestor from an element
+    function _findLink(el) {
+        while (el && el !== document.body) {
+            if ((el.tagName || '').toLowerCase() === 'a' && el.getAttribute('href')) return el;
+            el = el.parentElement;
+        }
+        return null;
+    }
+
     document.addEventListener('touchstart', function(e) {
         if (e.touches.length === 1) {
             _touchStartX = e.touches[0].clientX;
@@ -425,7 +450,16 @@ $(document).ready(function () {
     }, {passive: true});
 
     document.addEventListener('touchend', function(e) {
-        if (_touchStartX === null || messages.length === 0) { _touchStartX = null; return; }
+        if (_touchStartX === null) return;
+        // Handle links directly on touchend (don't rely on click which may not fire)
+        var link = _findLink(e.target);
+        if (link) {
+            _touchStartX = null;
+            _openExtLink(link.getAttribute('href'));
+            _touchNavigated = true;  // prevent click handler from also acting
+            return;
+        }
+        if (messages.length === 0) { _touchStartX = null; return; }
         if (_isInteractive(e.target)) { _touchStartX = null; return; }
         var endX = e.changedTouches[0].clientX;
         var w = window.innerWidth;
@@ -436,8 +470,14 @@ $(document).ready(function () {
 
     document.addEventListener('click', function(e) {
         if (_touchNavigated) { _touchNavigated = false; return; }
+        // Handle links via click (fallback for non-touch / desktop)
+        var link = _findLink(e.target);
+        if (link) {
+            e.preventDefault();
+            _openExtLink(link.getAttribute('href'));
+            return;
+        }
         if (messages.length === 0) return;
-        if (_isInteractive(e.target)) return;
         var w = window.innerWidth;
         var x = e.clientX;
         if (x < w * 0.35) navigateMessage(-1);
