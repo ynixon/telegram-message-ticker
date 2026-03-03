@@ -45,6 +45,7 @@ MAX_LATEST_MESSAGES = 100
 app.config["JSON_AS_ASCII"] = False
 INITIAL_FETCH_DONE = False
 INITIAL_FETCH_LOGGED = False
+_last_status_msg = "Starting…"
 
 
 # Initialize logging with timestamps
@@ -89,6 +90,8 @@ _telethon_ready = False
 
 def _status(msg):
     """Log a progress message and forward it to the UI callback if set."""
+    global _last_status_msg
+    _last_status_msg = msg
     logger.info("[STATUS] %s", msg)
     if _status_cb:
         try:
@@ -712,6 +715,25 @@ def api_messages():
             if data["message"]
         ]
     return jsonify({"messages": valid, "count": len(valid), "fetch_done": INITIAL_FETCH_DONE})
+
+
+@app.route("/api/status")
+def api_status():
+    """Diagnostic endpoint: reports backend state for the WebView UI."""
+    connected = False
+    authorized = False
+    if TELEGRAM_CLIENT:
+        try:
+            connected = TELEGRAM_CLIENT.is_connected()
+        except Exception:
+            pass
+    return jsonify({
+        "status": _last_status_msg,
+        "channels": len(CHANNELS),
+        "messages": len(LATEST_MESSAGES),
+        "fetch_done": INITIAL_FETCH_DONE,
+        "connected": connected,
+    })
 
 
 @socketio.on("disconnect")

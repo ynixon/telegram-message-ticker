@@ -23,4 +23,4 @@ config.json
 release.keystore
 
 # NDK native libraries copied by the CI workflow (not tracked in git)
-/libs/
+/libs/.pyc

@@ -41,6 +41,9 @@
 
     <!-- Loading message to display before the first message is loaded -->
     <div id="loading-message" class="loading-text">{{ translations['loading_message'] }}</div>
+
+    <!-- Backend status (visible until messages arrive) -->
+    <div id="backend-status" style="color:#888; font-size:13px; text-align:center; padding:8px; display:none;"></div>
     
     <!-- Section to display messages -->
     <div id="messages" style="display:none;"> <!-- Hide messages initially -->
@@ -58,5 +61,60 @@
 
     <!-- Refresh feed button -->
     <button id="refreshFeed">{{ translations['refresh_feed'] }}</button>
+
+    <!-- Vanilla JS fallback: works even if CDN scripts (jQuery/Socket.IO) fail to load -->
+    <script>
+    (function() {
+        var fallbackActive = false, displayedIds = {}, msgs = [], idx = 0, timer = null;
+        // Activate after 6s if jQuery-based code hasn't shown any messages
+        setTimeout(function() {
+            var md = document.getElementById('messages');
+            if (!md || md.style.display === 'none') {
+                console.log('Vanilla fallback: activating (jQuery may not have loaded)');
+                fallbackActive = true;
+                poll();
+                setInterval(poll, 4000);
+            }
+        }, 6000);
+        function poll() {
+            fetch('/api/status').then(function(r){return r.json();}).then(function(st) {
+                var el = document.getElementById('backend-status');
+                if (el && (!msgs.length)) {
+                    el.style.display = 'block';
+                    el.textContent = st.status + ' (channels: ' + st.channels + ', msgs: ' + st.messages + ')';
+                }
+            }).catch(function(){});
+            fetch('/api/messages').then(function(r){return r.json();}).then(function(data) {
+                if (data.messages && data.messages.length > 0) render(data.messages);
+            }).catch(function(e){ console.warn('Fallback poll error:', e); });
+        }
+        function render(list) {
+            var ld = document.getElementById('loading-message');
+            if (ld) ld.style.display = 'none';
+            var md = document.getElementById('messages');
+            if (md) md.style.display = 'block';
+            var bs = document.getElementById('backend-status');
+            if (bs) bs.style.display = 'none';
+            var added = 0;
+            list.forEach(function(m) {
+                if (!displayedIds[m.id]) { displayedIds[m.id] = true; msgs.push(m); added++; }
+            });
+            if (added > 0 && !timer) showNext();
+        }
+        function showNext() {
+            if (!msgs.length) return;
+            if (idx >= msgs.length) idx = 0;
+            var m = msgs[idx];
+            var ch = document.getElementById('channel-name');
+            var tx = document.getElementById('message-text');
+            var tm = document.getElementById('message-time');
+            if (ch) ch.textContent = m.channel || '';
+            if (tx) tx.innerHTML = m.message || '';
+            if (tm) tm.textContent = m.time || '';
+            idx++;
+            timer = setTimeout(showNext, 10000);
+        }
+    })();
+    </script>
 </body>
 </html>

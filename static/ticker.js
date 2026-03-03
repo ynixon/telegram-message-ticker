@@ -83,7 +83,7 @@ $(document).ready(function () {
             messages.sort((a, b) => new Date(b.time) - new Date(a.time));
     
             // Show the next message if nothing is currently being displayed
-            if (!isDisplaying && isConnected && messages.length > 0) {
+            if (!isDisplaying && messages.length > 0) {
                 $("#loading-message").hide();
                 $("#messages").show();
                 showMessage();  
@@ -254,11 +254,6 @@ $(document).ready(function () {
 
     // **Consolidated `showMessage` Function**
     function showMessage() {
-        if (!isConnected) {
-            console.warn("Cannot display messages while disconnected.");
-            return;  // Don't show messages while disconnected
-        }
-
         if (messages.length === 0) {
             console.warn("No messages to display yet.");
             isDisplaying = false;
@@ -364,6 +359,11 @@ $(document).ready(function () {
         $.getJSON('/api/messages', function (data) {
             if (data.messages && data.messages.length > 0) {
                 console.log("HTTP fallback: received " + data.messages.length + " messages");
+                // Server responded — treat as connected even if Socket.IO is down
+                if (!isConnected) {
+                    isConnected = true;
+                    $("#lost-connection").hide();
+                }
                 addMessages(data.messages);
             }
         }).fail(function () {
@@ -371,16 +371,32 @@ $(document).ready(function () {
         });
     }
 
-    // Poll via HTTP if no messages arrive within 4 seconds (covers the
-    // race condition where WebView connects before Telethon finishes fetching).
-    var httpPollTimer = setInterval(function () {
+    // Poll backend status and messages until messages arrive.
+    // Shows a visible status line so the user knows what's happening.
+    // Immediate first poll (don't wait 3s)
+    fetchMessagesViaHttp();
+    var _pollInterval = 3000; // start at 3s
+    var _statusTimer = setInterval(function () {
+        // Always poll status to show progress
+        $.getJSON('/api/status', function (st) {
+            var el = $("#backend-status");
+            if (messages.length === 0) {
+                el.show().text(st.status + " (channels: " + st.channels + ", msgs: " + st.messages + ")");
+            } else {
+                el.hide();
+            }
+        }).fail(function() {});
+
+        // Poll messages via HTTP until we have some
         if (messages.length === 0) {
-            console.log("No messages yet — polling via HTTP fallback");
             fetchMessagesViaHttp();
-        } else {
-            clearInterval(httpPollTimer);
+        } else if (_pollInterval < 30000) {
+            // Once we have messages, slow down to 30s and keep as a background refresh
+            _pollInterval = 30000;
+            clearInterval(_statusTimer);
+            _statusTimer = setInterval(function() { fetchMessagesViaHttp(); }, 30000);
         }
-    }, 4000);
+    }, _pollInterval);
 
     function changeLanguage(lang) {
         window.location.href = `/set_language/${lang}`;
