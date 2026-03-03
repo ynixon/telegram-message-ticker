@@ -714,6 +714,25 @@ def handle_request_messages():
     _broadcast_current_messages()
 
 
+@app.route("/api/open_url")
+def api_open_url():
+    """Open an external URL in the device's default browser."""
+    url = request.args.get("url", "")
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+    try:
+        from jnius import autoclass  # noqa
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        PythonActivity.mActivity.startActivity(intent)
+        return jsonify({"status": "opened"})
+    except Exception:
+        # Non-Android or jnius unavailable — return URL for client fallback
+        return jsonify({"status": "fallback", "url": url})
+
+
 @app.route("/api/messages")
 def api_messages():
     """REST endpoint returning the current messages as JSON.

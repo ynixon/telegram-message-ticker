@@ -80,17 +80,18 @@
         if (href.charAt(0) === '#' || href.charAt(0) === '/') return;
         // Allow localhost navigation (language switch etc.)
         if (href.indexOf('localhost') !== -1 || href.indexOf('127.0.0.1') !== -1) return;
-        // Open external links in default browser via intent scheme
+        // Open external links in the device's default browser via server-side Intent
         e.preventDefault();
         e.stopPropagation();
-        try {
-            var intentUrl = 'intent://' + href.replace(/^https?:\/\//, '') +
-                '#Intent;scheme=https;action=android.intent.action.VIEW;end';
-            window.location = intentUrl;
-        } catch(err) {
-            // Fallback: try window.open
-            window.open(href, '_system');
-        }
+        e.stopImmediatePropagation();
+        fetch('/api/open_url?url=' + encodeURIComponent(href))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'fallback' && data.url) {
+                    window.open(data.url, '_blank');
+                }
+            })
+            .catch(function() { window.open(href, '_blank'); });
     }, true);
 
     // Image lightbox overlay: fullscreen view of tapped images
