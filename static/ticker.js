@@ -270,8 +270,7 @@ $(document).ready(function () {
             if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
                 $("#message-media").append(`
-                    <video controls playsinline preload="auto" class="message-video"
-                           onclick="this.paused ? this.play() : this.pause()">
+                    <video controls playsinline preload="metadata" class="message-video">
                         <source src="${videoUrl}" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
@@ -400,46 +399,57 @@ $(document).ready(function () {
         showMessage();
     }
 
-    // Instagram-style tap navigation: detect touch position on the ENTIRE page
-    // Left 35% = previous, Right 35% = next, Center = ignored (allows text selection)
-    function handleNavTap(e) {
-        if (messages.length === 0) return;
-        var target = e.target || e.srcElement;
-        var tag = (target.tagName || '').toLowerCase();
-        // Skip clicks on interactive elements
-        if (tag === 'button' || tag === 'select' || tag === 'input' || tag === 'option' ||
-            tag === 'a' || tag === 'video' || tag === 'source' ||
-            $(target).closest('button, select, a, video, #image-overlay').length) {
-            return;
+    // Instagram-style tap navigation using NATIVE touch events.
+    // Left 35% = previous, Right 35% = next, Center = ignored.
+    // CRITICAL: We use {passive:true} and NEVER call preventDefault(),
+    // so buttons, videos, links, and all other interactive elements work normally.
+    var _touchStartX = null;
+    var _touchNavigated = false;
+
+    function _isInteractive(el) {
+        while (el && el !== document.body && el !== document.documentElement) {
+            var tag = (el.tagName || '').toLowerCase();
+            if (tag === 'button' || tag === 'select' || tag === 'input' ||
+                tag === 'a' || tag === 'video' || tag === 'textarea') return true;
+            if (el.id === 'image-overlay' || el.id === 'refreshFeed') return true;
+            el = el.parentElement;
         }
-        var pageWidth = $(window).width();
-        var clientX = e.pageX;
-        // For touch events, use the touch coordinate
-        if (e.originalEvent && e.originalEvent.changedTouches && e.originalEvent.changedTouches.length > 0) {
-            clientX = e.originalEvent.changedTouches[0].pageX;
-        }
-        if (clientX < pageWidth * 0.35) {
-            navigateMessage(-1);
-        } else if (clientX > pageWidth * 0.65) {
-            navigateMessage(1);
-        }
+        return false;
     }
-    $(document).on("click", handleNavTap);
-    // Also listen for touchend for faster response on mobile
-    $(document).on("touchend", function(e) {
-        // Prevent double-fire (touchend + click)
-        if (e.originalEvent && e.originalEvent.changedTouches) {
-            e.preventDefault();
-            handleNavTap(e);
+
+    document.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            _touchStartX = e.touches[0].clientX;
+            _touchNavigated = false;
         }
+    }, {passive: true});
+
+    document.addEventListener('touchend', function(e) {
+        if (_touchStartX === null || messages.length === 0) { _touchStartX = null; return; }
+        if (_isInteractive(e.target)) { _touchStartX = null; return; }
+        var endX = e.changedTouches[0].clientX;
+        var w = window.innerWidth;
+        if (endX < w * 0.35) { navigateMessage(-1); _touchNavigated = true; }
+        else if (endX > w * 0.65) { navigateMessage(1); _touchNavigated = true; }
+        _touchStartX = null;
+    }, {passive: true});
+
+    document.addEventListener('click', function(e) {
+        if (_touchNavigated) { _touchNavigated = false; return; }
+        if (messages.length === 0) return;
+        if (_isInteractive(e.target)) return;
+        var w = window.innerWidth;
+        var x = e.clientX;
+        if (x < w * 0.35) navigateMessage(-1);
+        else if (x > w * 0.65) navigateMessage(1);
     });
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
-        // Lazy-load: keep existing messages visible until new ones arrive.
-        // Only use HTTP (Socket.IO cross-thread emit is unreliable and causes races).
+        // Lazy-load: show overlay ON TOP of existing content (never clear the screen).
         var btn = $(this);
-        btn.prop('disabled', true).text('⟳ …');
+        btn.prop('disabled', true);
+        $("#refresh-overlay").css('display', 'flex');
         isRefreshing = true;
         $.getJSON('/api/messages', function (data) {
             if (data.messages && data.messages.length > 0) {
@@ -452,7 +462,8 @@ $(document).ready(function () {
             }
         }).always(function () {
             isRefreshing = false;
-            btn.prop('disabled', false).text(translations['refresh_feed'] || 'Refresh Feed');
+            $("#refresh-overlay").hide();
+            btn.prop('disabled', false);
         });
     });
 
