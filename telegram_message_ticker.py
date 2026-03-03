@@ -329,7 +329,7 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
         logger.info("Downloaded %s for message ID %d: %s", media_type, message.id, file_path)
 
         if media_type == "video":
-            media_tag = f'<video controls autoplay class="message-video"><source src="/media/{os.path.basename(file_path)}" type="video/mp4">Your browser does not support the video tag.</video>'
+            media_tag = f'<video controls playsinline preload="auto" class="message-video"><source src="/media/{os.path.basename(file_path)}" type="video/mp4">Your browser does not support the video tag.</video>'
         elif media_type == "photo":
             media_tag = f'<img src="/media/{os.path.basename(file_path)}" alt="Photo" class="message-image">'
 

@@ -245,9 +245,10 @@ $(document).ready(function () {
         $("#message-media").html(''); 
 
         const imageRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
-        const videoRegex = /<video[^>]+src="([^"]+)"[^>]*>/g;
+        // Match <video ... src="URL"> or <video ...><source src="URL" ...>
+        const videoRegex = /<video[^>]*(?:\s+src="([^"]+)"[^>]*>|>[\s\S]*?<source[^>]+src="([^"]+)"[^>]*>)[\s\S]*?<\/video>/gi;
 
-        // Extract and clean message text
+        // Extract and clean message text — remove all image and video tags
         let cleanedMessage = messageText.replace(imageRegex, '').replace(videoRegex, '');
 
         let imageMatch;
@@ -261,12 +262,16 @@ $(document).ready(function () {
         }
 
         let videoMatch;
+        // Reset regex state for exec loop
+        videoRegex.lastIndex = 0;
         while ((videoMatch = videoRegex.exec(messageText)) !== null) {
-            if (videoMatch[1]) {
-                const videoUrl = videoMatch[1];
+            // Group 1 = src on <video> itself, Group 2 = src on <source> child
+            var videoUrl = videoMatch[1] || videoMatch[2];
+            if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
                 $("#message-media").append(`
-                    <video controls playsinline autoplay muted class="message-video">
+                    <video controls playsinline preload="auto" class="message-video"
+                           onclick="this.paused ? this.play() : this.pause()">
                         <source src="${videoUrl}" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
@@ -397,31 +402,45 @@ $(document).ready(function () {
 
     // Instagram-style tap navigation: detect touch position on the ENTIRE page
     // Left 35% = previous, Right 35% = next, Center = ignored (allows text selection)
-    $(document).on("click", function (e) {
+    function handleNavTap(e) {
         if (messages.length === 0) return;
-        // Skip clicks on buttons, selects, inputs, links, video controls
-        var tag = (e.target.tagName || '').toLowerCase();
+        var target = e.target || e.srcElement;
+        var tag = (target.tagName || '').toLowerCase();
+        // Skip clicks on interactive elements
         if (tag === 'button' || tag === 'select' || tag === 'input' || tag === 'option' ||
-            tag === 'a' || tag === 'video' || $(e.target).closest('button, select, a, video').length) {
+            tag === 'a' || tag === 'video' || tag === 'source' ||
+            $(target).closest('button, select, a, video, #image-overlay').length) {
             return;
         }
         var pageWidth = $(window).width();
-        var clickX = e.pageX;
-        if (clickX < pageWidth * 0.35) {
+        var clientX = e.pageX;
+        // For touch events, use the touch coordinate
+        if (e.originalEvent && e.originalEvent.changedTouches && e.originalEvent.changedTouches.length > 0) {
+            clientX = e.originalEvent.changedTouches[0].pageX;
+        }
+        if (clientX < pageWidth * 0.35) {
             navigateMessage(-1);
-        } else if (clickX > pageWidth * 0.65) {
+        } else if (clientX > pageWidth * 0.65) {
             navigateMessage(1);
+        }
+    }
+    $(document).on("click", handleNavTap);
+    // Also listen for touchend for faster response on mobile
+    $(document).on("touchend", function(e) {
+        // Prevent double-fire (touchend + click)
+        if (e.originalEvent && e.originalEvent.changedTouches) {
+            e.preventDefault();
+            handleNavTap(e);
         }
     });
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
-        // Lazy-load: keep existing messages visible until new ones arrive
+        // Lazy-load: keep existing messages visible until new ones arrive.
+        // Only use HTTP (Socket.IO cross-thread emit is unreliable and causes races).
         var btn = $(this);
         btn.prop('disabled', true).text('⟳ …');
-        isRefreshing = true;  // Prevent removeOldMessages from clearing the screen
-        socket.emit('request_messages');
-        // HTTP fallback in case Socket.IO cross-thread emit fails
+        isRefreshing = true;
         $.getJSON('/api/messages', function (data) {
             if (data.messages && data.messages.length > 0) {
                 console.log("Refresh: received " + data.messages.length + " messages");
@@ -431,15 +450,10 @@ $(document).ready(function () {
                 }
                 addMessages(data.messages);
             }
+        }).always(function () {
             isRefreshing = false;
-        }).fail(function () {
-            console.warn("Refresh: /api/messages request failed");
-            isRefreshing = false;
-        });
-        setTimeout(function() {
             btn.prop('disabled', false).text(translations['refresh_feed'] || 'Refresh Feed');
-            isRefreshing = false;  // Safety net
-        }, 3000);
+        });
     });
 
     // HTTP fallback for fetching messages (bypasses Socket.IO threading issues)
