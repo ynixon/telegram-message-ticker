@@ -550,11 +550,17 @@ class TelegramTickerApp(App):
             @run_on_ui_thread
             def _show():
                 from jnius import autoclass  # noqa
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                WebView        = autoclass('android.webkit.WebView')
-                WebViewClient  = autoclass('android.webkit.WebViewClient')
+                PythonActivity  = autoclass('org.kivy.android.PythonActivity')
+                WebView         = autoclass('android.webkit.WebView')
+                WebViewClient   = autoclass('android.webkit.WebViewClient')
+                WebChromeClient = autoclass('android.webkit.WebChromeClient')
+                WindowManager   = autoclass('android.view.WindowManager$LayoutParams')
 
                 activity = PythonActivity.mActivity
+
+                # Keep screen on (prevent Android sleep)
+                activity.getWindow().addFlags(WindowManager.FLAG_KEEP_SCREEN_ON)
+
                 wv = WebView(activity)
 
                 settings = wv.getSettings()
@@ -563,8 +569,11 @@ class TelegramTickerApp(App):
                 settings.setMediaPlaybackRequiresUserGesture(False)
                 settings.setAllowFileAccess(True)
                 settings.setAllowContentAccess(True)
+                settings.setJavaScriptCanOpenWindowsAutomatically(True)
+                settings.setSupportMultipleWindows(False)
 
                 wv.setWebViewClient(WebViewClient())
+                wv.setWebChromeClient(WebChromeClient())
                 activity.setContentView(wv)
                 wv.loadUrl(url)
 

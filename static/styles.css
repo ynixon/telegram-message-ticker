@@ -154,13 +154,23 @@ body {
     margin: 20px;
 }
 
-/* Instagram-style navigation — touch zones detected via JS on #messages */
+/* Instagram-style navigation — touch zones detected via JS on full page */
 #messages {
     position: relative;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     -webkit-user-select: none;
+}
+
+body {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Image enlargement: make images look tappable */
+.message-image {
+    cursor: zoom-in;
 }
 
 #message-counter {

@@ -64,9 +64,13 @@
     <!-- Refresh feed button -->
     <button id="refreshFeed">{{ translations['refresh_feed'] }}</button>
 
-    <!-- Intercept ALL link clicks inside the ticker to prevent the WebView
-         from navigating to external/non-http URLs (e.g. whatsapp://) which
-         crash the view and leave the user stuck. -->
+    <!-- Fullscreen image overlay (lightbox) -->
+    <div id="image-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:9999; justify-content:center; align-items:center;" onclick="closeImageOverlay()">
+        <img id="overlay-image" src="" style="max-width:95%; max-height:95%; object-fit:contain;">
+    </div>
+
+    <!-- Intercept external link clicks: open them in the default browser
+         via intent:// scheme (works in Android WebView without custom WebViewClient). -->
     <script>
     document.addEventListener('click', function(e) {
         var link = e.target.closest('a[href]');
@@ -76,10 +80,32 @@
         if (href.charAt(0) === '#' || href.charAt(0) === '/') return;
         // Allow localhost navigation (language switch etc.)
         if (href.indexOf('localhost') !== -1 || href.indexOf('127.0.0.1') !== -1) return;
-        // Block everything else (external http, whatsapp://, tg://, etc.)
+        // Open external links in default browser via intent scheme
         e.preventDefault();
         e.stopPropagation();
+        try {
+            var intentUrl = 'intent://' + href.replace(/^https?:\/\//, '') +
+                '#Intent;scheme=https;action=android.intent.action.VIEW;end';
+            window.location = intentUrl;
+        } catch(err) {
+            // Fallback: try window.open
+            window.open(href, '_system');
+        }
     }, true);
+
+    // Image lightbox overlay: fullscreen view of tapped images
+    function openImageOverlay(src) {
+        var overlay = document.getElementById('image-overlay');
+        var img = document.getElementById('overlay-image');
+        if (overlay && img) {
+            img.src = src;
+            overlay.style.display = 'flex';
+        }
+    }
+    function closeImageOverlay() {
+        var overlay = document.getElementById('image-overlay');
+        if (overlay) overlay.style.display = 'none';
+    }
     </script>
 
     <!-- Vanilla JS fallback: works even if CDN scripts (jQuery/Socket.IO) fail to load -->
@@ -131,7 +157,14 @@
             var ct = document.getElementById('message-counter');
             if (ch) ch.textContent = m.channel || '';
             if (tx) tx.innerHTML = m.message || '';
-            if (tm) tm.textContent = m.time || '';
+            if (tm) {
+                var d = new Date(m.time);
+                if (!isNaN(d.getTime())) {
+                    tm.textContent = d.toLocaleString('he-IL', {timeZone:'Asia/Jerusalem', hour:'2-digit', minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit', year:'numeric', hour12:false});
+                } else {
+                    tm.textContent = m.time || '';
+                }
+            }
             if (ct) ct.textContent = (idx + 1) + ' / ' + msgs.length;
             idx++;
             clearTimeout(timer);

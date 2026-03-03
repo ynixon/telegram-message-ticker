@@ -3,6 +3,27 @@ $(document).ready(function () {
     var message_age_limit_in_hours = 0.25;
     console.log("Message age limit set to:", message_age_limit_in_hours, "hours");
 
+    // Keep the screen awake using the Screen Wake Lock API
+    var wakeLock = null;
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log('Screen Wake Lock acquired');
+                wakeLock.addEventListener('release', function() {
+                    console.log('Screen Wake Lock released');
+                });
+            }
+        } catch (err) {
+            console.warn('Wake Lock failed:', err);
+        }
+    }
+    requestWakeLock();
+    // Re-acquire wake lock when page becomes visible again
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') requestWakeLock();
+    });
+
     // Socket.IO configuration with reconnection settings
     var socket = io({
         reconnection: true,             // Ensure reconnection is enabled
@@ -231,7 +252,8 @@ $(document).ready(function () {
             if (imageMatch[1]) {
                 const imageUrl = imageMatch[1];
                 console.debug("Adding image to message media:", imageUrl);
-                $("#message-media").append(`<img src="${imageUrl}" alt="Photo" class="message-image">`);
+                // Tap to enlarge in a fullscreen overlay
+                $("#message-media").append(`<img src="${imageUrl}" alt="Photo" class="message-image" onclick="openImageOverlay(this.src)">`);
             }
         }
 
@@ -241,7 +263,7 @@ $(document).ready(function () {
                 const videoUrl = videoMatch[1];
                 console.debug("Adding video to message media:", videoUrl);
                 $("#message-media").append(`
-                    <video controls autoplay class="message-video">
+                    <video controls playsinline autoplay muted class="message-video">
                         <source src="${videoUrl}" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
@@ -370,15 +392,21 @@ $(document).ready(function () {
         showMessage();
     }
 
-    // Instagram-style tap navigation: detect touch position on #messages
+    // Instagram-style tap navigation: detect touch position on the ENTIRE page
     // Left 35% = previous, Right 35% = next, Center = ignored (allows text selection)
-    $("#messages").on("click", function (e) {
+    $(document).on("click", function (e) {
         if (messages.length === 0) return;
-        var containerWidth = $(this).width();
-        var clickX = e.pageX - $(this).offset().left;
-        if (clickX < containerWidth * 0.35) {
+        // Skip clicks on buttons, selects, inputs, links, video controls
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'button' || tag === 'select' || tag === 'input' || tag === 'option' ||
+            tag === 'a' || tag === 'video' || $(e.target).closest('button, select, a, video').length) {
+            return;
+        }
+        var pageWidth = $(window).width();
+        var clickX = e.pageX;
+        if (clickX < pageWidth * 0.35) {
             navigateMessage(-1);
-        } else if (clickX > containerWidth * 0.65) {
+        } else if (clickX > pageWidth * 0.65) {
             navigateMessage(1);
         }
     });
