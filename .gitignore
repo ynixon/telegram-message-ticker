@@ -9,7 +9,6 @@ user_session.session-journal
 # Ignore media directory
 /media/
 
-channels.json
 config.json
 /.gitignore
 
