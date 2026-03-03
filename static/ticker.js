@@ -45,8 +45,11 @@ $(document).ready(function () {
     // Set message_age_limit to match the server configuration (in hours)
     var message_age_limit = message_age_limit_in_hours; // 0.25 = 15 minutes
 
+    var isRefreshing = false;  // Guard: skip cleanup while refresh is in flight
+
     // Function to remove old messages
     function removeOldMessages() {
+        if (isRefreshing) return;  // Don't prune during a refresh
         const currentTime = new Date();
 
         // Filter out messages older than the message_age_limit
@@ -413,15 +416,30 @@ $(document).ready(function () {
 
     // Event listeners for UI interactions
     $("#refreshFeed").on('click', function () {
-        // Show brief "refreshing" indicator without clearing existing messages
+        // Lazy-load: keep existing messages visible until new ones arrive
         var btn = $(this);
         btn.prop('disabled', true).text('⟳ …');
+        isRefreshing = true;  // Prevent removeOldMessages from clearing the screen
         socket.emit('request_messages');
         // HTTP fallback in case Socket.IO cross-thread emit fails
-        fetchMessagesViaHttp();
+        $.getJSON('/api/messages', function (data) {
+            if (data.messages && data.messages.length > 0) {
+                console.log("Refresh: received " + data.messages.length + " messages");
+                if (!isConnected) {
+                    isConnected = true;
+                    $("#lost-connection").hide();
+                }
+                addMessages(data.messages);
+            }
+            isRefreshing = false;
+        }).fail(function () {
+            console.warn("Refresh: /api/messages request failed");
+            isRefreshing = false;
+        });
         setTimeout(function() {
             btn.prop('disabled', false).text(translations['refresh_feed'] || 'Refresh Feed');
-        }, 2000);
+            isRefreshing = false;  // Safety net
+        }, 3000);
     });
 
     // HTTP fallback for fetching messages (bypasses Socket.IO threading issues)
