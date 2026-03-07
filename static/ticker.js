@@ -242,7 +242,7 @@ $(document).ready(function () {
             messageText = String(messageText);
         }
 
-        $("#message-media").html(''); 
+        $("#message-media").html('');
 
         const imageRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
         // Match <video ... src="URL"> or <video ...><source src="URL" ...>
@@ -269,61 +269,64 @@ $(document).ready(function () {
             var videoUrl = videoMatch[1] || videoMatch[2];
             if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
-
-                function makeVideoLink(url) {
-                    var link = document.createElement('a');
-                    link.href = url;
-                    link.className = 'video-download-link';
-                    link.textContent = '📹 פתח וידאו';
-                    link.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        fetch('/api/open_url?url=' + encodeURIComponent(url) + '&mime=video%2Fmp4')
-                            .then(function(r) { return r.json(); })
-                            .then(function(d) { if (d.status === 'fallback') window.open(url, '_blank'); })
-                            .catch(function() { window.open(url, '_blank'); });
-                    });
-                    return link;
-                }
-
-                (function(url) {
-                    var vid = document.createElement('video');
-                    vid.controls = true;
-                    vid.setAttribute('playsinline', '');
-                    vid.setAttribute('webkit-playsinline', '');
-                    vid.preload = 'metadata';
-                    vid.className = 'message-video';
-
-                    var replaced = false;
-                    function replaceWithLink() {
-                        if (replaced) return;
-                        replaced = true;
-                        console.warn("Replacing broken video with link:", url);
-                        if (vid.parentNode) vid.parentNode.replaceChild(makeVideoLink(url), vid);
-                    }
-
-                    // error event: fires for network errors or unsupported src
-                    vid.addEventListener('error', function() {
-                        console.error("Video error code:", vid.error && vid.error.code, url);
-                        replaceWithLink();
-                    });
-
-                    // Timeout fallback: Android WebView silently fails H.265 without
-                    // firing 'error'. If metadata isn't loaded within 6 s, give up.
-                    var deadline = setTimeout(function() {
-                        if (vid.readyState === 0) {  // HAVE_NOTHING — never loaded
-                            console.warn("Video load timeout (readyState=0):", url);
-                            replaceWithLink();
-                        }
-                    }, 6000);
-                    vid.addEventListener('loadedmetadata', function() { clearTimeout(deadline); });
-
-                    vid.src = url;
-                    $("#message-media").append(vid);
-                })(videoUrl);
+                appendVideo(videoUrl);
             }
         }
 
         return cleanedMessage;
+    }
+
+    // Build a "open in native player" fallback link for a video URL
+    function makeVideoLink(url) {
+        var link = document.createElement('a');
+        link.href = url;
+        link.className = 'video-download-link';
+        link.textContent = '📹 פתח וידאו';
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            fetch('/api/open_url?url=' + encodeURIComponent(url) + '&mime=video%2Fmp4')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { if (d.status === 'fallback') window.open(url, '_blank'); })
+                .catch(function() { window.open(url, '_blank'); });
+        });
+        return link;
+    }
+
+    // Append a video element to #message-media, with error and timeout fallback
+    function appendVideo(url) {
+        var vid = document.createElement('video');
+        vid.controls = true;
+        vid.setAttribute('playsinline', '');
+        vid.setAttribute('webkit-playsinline', '');
+        vid.preload = 'metadata';
+        vid.className = 'message-video';
+
+        var replaced = false;
+        function replaceWithLink() {
+            if (replaced) return;
+            replaced = true;
+            console.warn("Replacing broken video with link:", url);
+            if (vid.parentNode) vid.parentNode.replaceChild(makeVideoLink(url), vid);
+        }
+
+        // error event: fires for network errors or unsupported src
+        vid.addEventListener('error', function() {
+            console.error("Video error code:", vid.error && vid.error.code, url);
+            replaceWithLink();
+        });
+
+        // Timeout fallback: Android WebView silently fails H.265 without
+        // firing 'error'. If metadata isn't loaded within 6 s, give up.
+        var deadline = setTimeout(function() {
+            if (vid.readyState === 0) {  // HAVE_NOTHING — never loaded
+                console.warn("Video load timeout (readyState=0):", url);
+                replaceWithLink();
+            }
+        }, 6000);
+        vid.addEventListener('loadedmetadata', function() { clearTimeout(deadline); });
+
+        vid.src = url;
+        $("#message-media").append(vid);
     }
 
     // **Consolidated `showMessage` Function**
