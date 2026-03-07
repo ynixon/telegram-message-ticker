@@ -87,11 +87,6 @@ $(document).ready(function () {
                 messages.push(newMessage);
                 newMessagesAdded++;
                 console.log(`Added new message ID: ${newMessage.id} from channel: ${newMessage.channel}`);
-    
-                // Immediately show push messages
-                if (newMessage.is_push) {
-                    showPushMessage(newMessage);
-                }
             } else if (isDuplicate) {
                 // Optionally log duplicates only if necessary for debugging
                 console.debug(`Duplicate message found, skipping ID: ${newMessage.id} from channel: ${newMessage.channel}`);
@@ -102,17 +97,30 @@ $(document).ready(function () {
     
         if (newMessagesAdded > 0) {
             removeOldMessages();  // Remove old messages after new ones are added
-    
-            // Sort messages in descending order by time
+
+            // Sort messages in descending order by time (newest = index 0)
             messages.sort((a, b) => new Date(b.time) - new Date(a.time));
-    
-            // Show the next message if nothing is currently being displayed
-            if (!isDisplaying && messages.length > 0) {
-                showMessage();  // renders content first
+
+            // Check if any of the newly added messages is a push (real-time) message
+            var hasPush = newMessages.some(function(m) { return m.is_push; });
+
+            if (hasPush) {
+                // Jump immediately to the latest message — no delay, no rotation
+                currentIndex = 0;
+                clearTimeout(timeoutId);
+                clearTimeout(backupTimeoutId);
+                isDisplaying = false;
+                showMessage();
+                $("#loading-message").hide();
+                $("#messages").show();
+            } else if (!isDisplaying && messages.length > 0) {
+                // Initial load or HTTP refresh: start at the latest message
+                currentIndex = 0;
+                showMessage();
                 $("#loading-message").hide();
                 $("#messages").show();
             }
-    
+
             console.log(`Number of new messages added: ${newMessagesAdded}`);
         } else {
             console.debug("No new messages added.");
@@ -198,14 +206,6 @@ $(document).ready(function () {
 	$("#lost-connection").text(translations['lost_connection']).show();
         isConnected = false;  // Ensure the flag remains false if reconnection fails
     });
-
-    // Function to display push messages
-    function showPushMessage(messageData) {
-        $("#push-indicator").text(translations['push_message']).show();
-        
-        // Optionally, highlight the push message or perform other UI actions
-        console.log(`Push message displayed: ID ${messageData.id}`);
-    }
 
     // Listen for initial messages from server
     socket.on('initial_messages', function (data) {
@@ -346,31 +346,14 @@ $(document).ready(function () {
                 $("#push-indicator").hide();
             }
 
-            currentIndex = (currentIndex + 1) % messages.length;  // Loop through messages continuously
-
             isDisplaying = true;
 
-            // Update message counter
-            $("#message-counter").text((currentIndex === 0 ? messages.length : currentIndex) + " / " + messages.length);
+            // Update message counter (1-based for display)
+            $("#message-counter").text((currentIndex + 1) + " / " + messages.length);
 
+            // No auto-rotation: message stays visible until the next one arrives or user navigates
             clearTimeout(timeoutId);
             clearTimeout(backupTimeoutId);
-
-            // Set primary timeout for the next message
-            timeoutId = setTimeout(function () {
-                console.debug("Timeout for next message reached, moving to next message.");
-                isDisplaying = false;
-                showMessage();
-            }, 5000); // 5 seconds per message
-
-            // Set backup timeout to handle any delays in displaying
-            backupTimeoutId = setTimeout(function () {
-                if (isDisplaying) {
-                    console.debug("Backup timeout reached, forcing next message.");
-                    isDisplaying = false;
-                    showMessage();
-                }
-            }, 15000); // 15 seconds backup timeout
         } else {
             console.warn("Invalid message or all messages displayed.");
             isDisplaying = false;
@@ -383,16 +366,9 @@ $(document).ready(function () {
     function navigateMessage(direction) {
         if (messages.length === 0) return;
 
-        // currentIndex already points to the NEXT message to show (was incremented in showMessage)
-        // So the currently displayed message is at (currentIndex - 1)
-        // For "next": we want to show currentIndex (which showMessage will do)
-        // For "prev": we want to go back 2 from currentIndex
-        if (direction === -1) {
-            currentIndex = (currentIndex - 2 + messages.length) % messages.length;
-        }
-        // direction === +1: currentIndex already points to next, no adjustment needed
+        // currentIndex points to the currently displayed message (not pre-incremented)
+        currentIndex = (currentIndex + direction + messages.length) % messages.length;
 
-        // Reset timers and show
         clearTimeout(timeoutId);
         clearTimeout(backupTimeoutId);
         isDisplaying = false;
