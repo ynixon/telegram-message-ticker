@@ -828,35 +828,38 @@ def media(filename):
     if not mimetype:
         mimetype = "application/octet-stream"
 
-    range_header = request.headers.get("Range", None)
-    if not range_header:
-        resp = send_from_directory(CONFIG["media_folder"], filename)
-        resp.headers["Accept-Ranges"] = "bytes"
-        return resp
+    # Parse Range header (always sent by Android WebView/Chrome for video)
+    range_header = request.headers.get("Range")
+    byte1, byte2 = 0, file_size - 1
+    status = 200
+    if range_header:
+        m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+        if m:
+            byte1 = int(m.group(1))
+            if m.group(2):
+                byte2 = int(m.group(2))
+        status = 206
 
-    size = os.path.getsize(media_path)
-    byte1, byte2 = 0, None
-    match = re.search(r"(\d+)-(\d*)", range_header)
-    if match:
-        groups = match.groups()
-        byte1 = int(groups[0])
-        if groups[1]:
-            byte2 = int(groups[1])
+    length = byte2 - byte1 + 1
 
-    length = size - byte1 if byte2 is None else byte2 - byte1 + 1
-    try:
+    # Stream in 64 KB chunks — never loads large files fully into RAM,
+    # and avoids send_from_directory which crashes on Android when the
+    # media folder is outside the Flask app bundle directory.
+    def generate():
         with open(media_path, "rb") as f:
             f.seek(byte1)
-            data = f.read(length)
-    except OSError as e:
-        logger.error(f"Error reading media file {media_path}: {e}")
-        return jsonify({"error": "Error reading file"}), 500
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
 
-    end = byte1 + len(data) - 1
-    rv = Response(data, 206, content_type=mimetype)
+    rv = Response(generate(), status, content_type=mimetype)
     rv.headers["Accept-Ranges"] = "bytes"
-    rv.headers["Content-Range"] = f"bytes {byte1}-{end}/{size}"
-    rv.headers["Content-Length"] = str(len(data))
+    rv.headers["Content-Length"] = str(length)
+    rv.headers["Content-Range"] = f"bytes {byte1}-{byte2}/{file_size}"
     return rv
 
 
