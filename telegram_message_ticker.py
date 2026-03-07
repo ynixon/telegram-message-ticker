@@ -9,6 +9,7 @@ import logging
 import signal
 import datetime
 import re
+import mimetypes
 from bs4 import BeautifulSoup
 from flask import (
     Flask,
