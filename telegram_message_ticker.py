@@ -22,6 +22,7 @@ from flask import (
     session,
 )
 import eventlet
+import eventlet.wsgi  # submodule must be imported explicitly
 from argparse import ArgumentParser
 from flask_socketio import SocketIO, emit
 from telethon import TelegramClient, events
