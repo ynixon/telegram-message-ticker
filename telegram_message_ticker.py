@@ -16,7 +16,7 @@ from flask import (
     render_template,
     redirect,
     url_for,
-    send_from_directory,
+    send_file,
     request,
     Response,
     session,
@@ -828,37 +828,35 @@ def media(filename):
     if not mimetype:
         mimetype = "application/octet-stream"
 
-    # Parse Range header (always sent by Android WebView/Chrome for video)
     range_header = request.headers.get("Range")
-    byte1, byte2 = 0, file_size - 1
-    status = 200
-    if range_header:
-        m = re.search(r"bytes=(\d+)-(\d*)", range_header)
-        if m:
-            byte1 = int(m.group(1))
-            if m.group(2):
-                byte2 = int(m.group(2))
-        status = 206
 
+    if not range_header:
+        # No Range header: let Flask/Werkzeug serve it via FileWrapper.
+        # This is the standard send_file path — it works correctly with
+        # eventlet because Werkzeug's FileWrapper is a proper WSGI iterable,
+        # not a Python generator, so eventlet doesn't block on it.
+        response = send_file(media_path, mimetype=mimetype)
+        response.headers["Accept-Ranges"] = "bytes"
+        return response
+
+    # Range request: read the requested bytes directly into memory.
+    # Generators deadlock under eventlet (monkey-patched I/O never resumes
+    # yield). Returning concrete bytes avoids the event-loop issue entirely.
+    # Chrome/Android WebView always requests small chunks (256 KB – 1 MB),
+    # so loading the range into RAM is safe.
+    m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+    byte1 = int(m.group(1)) if m else 0
+    byte2 = int(m.group(2)) if (m and m.group(2)) else file_size - 1
+    byte2 = min(byte2, file_size - 1)
     length = byte2 - byte1 + 1
 
-    # Stream in 64 KB chunks — never loads large files fully into RAM,
-    # and avoids send_from_directory which crashes on Android when the
-    # media folder is outside the Flask app bundle directory.
-    def generate():
-        with open(media_path, "rb") as f:
-            f.seek(byte1)
-            remaining = length
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
+    with open(media_path, "rb") as f:
+        f.seek(byte1)
+        data = f.read(length)
 
-    rv = Response(generate(), status, content_type=mimetype)
+    rv = Response(data, 206, content_type=mimetype)
     rv.headers["Accept-Ranges"] = "bytes"
-    rv.headers["Content-Length"] = str(length)
+    rv.headers["Content-Length"] = str(len(data))
     rv.headers["Content-Range"] = f"bytes {byte1}-{byte2}/{file_size}"
     return rv
 
