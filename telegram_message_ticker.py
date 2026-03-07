@@ -791,9 +791,15 @@ def media(filename):
         logger.error(f"Requested media file does not exist: {media_path}")
         return jsonify({"error": "File not found"}), 404
 
+    mimetype, _ = mimetypes.guess_type(media_path)
+    if not mimetype:
+        mimetype = "application/octet-stream"
+
     range_header = request.headers.get("Range", None)
     if not range_header:
-        return send_from_directory(CONFIG["media_folder"], filename)
+        resp = send_from_directory(CONFIG["media_folder"], filename)
+        resp.headers["Accept-Ranges"] = "bytes"
+        return resp
 
     size = os.path.getsize(media_path)
     byte1, byte2 = 0, None
@@ -805,7 +811,6 @@ def media(filename):
             byte2 = int(groups[1])
 
     length = size - byte1 if byte2 is None else byte2 - byte1 + 1
-    data = None
     try:
         with open(media_path, "rb") as f:
             f.seek(byte1)
@@ -814,13 +819,11 @@ def media(filename):
         logger.error(f"Error reading media file {media_path}: {e}")
         return jsonify({"error": "Error reading file"}), 500
 
-    # Determine the correct MIME type
-    mimetype, _ = mimetypes.guess_type(media_path)
-    if not mimetype:
-        mimetype = "application/octet-stream"
-
-    rv = Response(data, 206, mimetype=mimetype, content_type=mimetype, direct_passthrough=True)
-    rv.headers.add("Content-Range", f"bytes {byte1}-{byte1 + len(data) - 1}/{size}")
+    end = byte1 + len(data) - 1
+    rv = Response(data, 206, content_type=mimetype)
+    rv.headers["Accept-Ranges"] = "bytes"
+    rv.headers["Content-Range"] = f"bytes {byte1}-{end}/{size}"
+    rv.headers["Content-Length"] = str(len(data))
     return rv
 
 
