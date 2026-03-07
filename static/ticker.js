@@ -269,12 +269,25 @@ $(document).ready(function () {
             var videoUrl = videoMatch[1] || videoMatch[2];
             if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
-                $("#message-media").append(`
-                    <video controls playsinline webkit-playsinline preload="auto" class="message-video">
+                var $vid = $(`
+                    <video controls playsinline webkit-playsinline preload="metadata" class="message-video">
                         <source src="${videoUrl}" type="video/mp4">
-                        Your browser does not support the video tag.
                     </video>
                 `);
+                $vid[0].addEventListener('error', function() {
+                    console.warn("Video error, trying without type hint:", videoUrl);
+                    var $fallback = $(`
+                        <video controls playsinline webkit-playsinline preload="metadata" class="message-video">
+                            <source src="${videoUrl}">
+                        </video>
+                    `);
+                    $fallback[0].addEventListener('error', function() {
+                        console.error("Video failed to load:", videoUrl);
+                        $(this).replaceWith(`<a href="${videoUrl}" target="_blank" class="video-download-link">📹 פתח וידאו</a>`);
+                    });
+                    $(this).replaceWith($fallback);
+                }, true);
+                $("#message-media").append($vid);
             }
         }
 

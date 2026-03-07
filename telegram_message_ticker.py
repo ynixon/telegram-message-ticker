@@ -323,8 +323,18 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
             return media_type, media_tag
 
         file_path = os.path.join(media_dir, filename)
-        if not os.path.exists(file_path):
+
+        # Re-download if file is missing or zero-byte (partial/failed previous download)
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.warning("Removed zero-byte media file, re-downloading: %s", file_path)
             await telegram_client.download_media(message, file=file_path)
+
+        # Only create tag if file was actually downloaded successfully
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            logger.error("Media download produced empty file for message ID %d", message.id)
+            return media_type, media_tag
 
         logger.info("Downloaded %s for message ID %d: %s", media_type, message.id, file_path)
 
@@ -333,7 +343,7 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
         elif media_type == "photo":
             media_tag = f'<img src="/media/{os.path.basename(file_path)}" alt="Photo" class="message-image">'
 
-    except (OSError, RuntimeError) as download_err:
+    except Exception as download_err:
         logger.error("Failed to download %s for message ID %d: %s", media_type, message.id, download_err)
 
     return media_type, media_tag
