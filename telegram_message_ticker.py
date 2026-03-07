@@ -16,7 +16,6 @@ from flask import (
     render_template,
     redirect,
     url_for,
-    send_file,
     request,
     Response,
     session,
@@ -33,66 +32,73 @@ import requests
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode="eventlet")
 
-MEDIA_SERVER_PORT = 3006  # Separate eventlet listener for raw file serving
 
+class MediaMiddleware:
+    """WSGI middleware: intercepts /media/<file> requests and serves files
+    directly with Range support, completely bypassing Flask's routing and
+    error handlers.  No redirect, no second port — everything on :3005."""
 
-def _media_wsgi(environ, start_response):
-    """Minimal WSGI app that serves media files with Range support.
+    def __init__(self, flask_app, get_media_folder):
+        self.flask_app = flask_app
+        self.get_media_folder = get_media_folder  # callable → current folder
 
-    Runs on its own eventlet listener (port 3006), completely bypassing
-    Flask's middleware stack and error handlers. This eliminates all the
-    Flask/eventlet interaction issues that caused 500 errors on the main
-    port-3005 /media/ route.
-    """
-    path = environ.get("PATH_INFO", "").lstrip("/")
-    if not path:
-        start_response("404 Not Found", [("Content-Type", "text/plain")])
-        return [b"Not Found"]
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path.startswith("/media/"):
+            return self._serve(path[7:], environ, start_response)
+        return self.flask_app(environ, start_response)
 
-    media_path = os.path.join(CONFIG.get("media_folder", "media"), path)
+    def _serve(self, raw_filename, environ, start_response):
+        filename = os.path.basename(raw_filename)   # prevents path traversal
+        if not filename:
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b"Not Found"]
 
-    if not os.path.isfile(media_path):
-        start_response("404 Not Found", [("Content-Type", "text/plain")])
-        return [b"Not Found"]
+        media_path = os.path.join(self.get_media_folder(), filename)
 
-    try:
-        file_size = os.path.getsize(media_path)
-        if file_size == 0:
-            start_response("204 No Content", [])
-            return [b""]
+        if not os.path.isfile(media_path):
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b"Not Found"]
 
-        mimetype, _ = mimetypes.guess_type(media_path)
-        if not mimetype:
-            mimetype = "application/octet-stream"
+        try:
+            file_size = os.path.getsize(media_path)
+            if file_size == 0:
+                start_response("204 No Content", [])
+                return [b""]
 
-        range_header = environ.get("HTTP_RANGE", "")
-        byte1, byte2, status = 0, file_size - 1, "200 OK"
+            mimetype, _ = mimetypes.guess_type(media_path)
+            if not mimetype:
+                mimetype = "application/octet-stream"
 
-        if range_header:
-            m = re.search(r"bytes=(\d+)-(\d*)", range_header)
-            if m:
-                byte1 = int(m.group(1))
-                byte2 = int(m.group(2)) if m.group(2) else file_size - 1
-            byte2 = min(byte2, file_size - 1)
-            status = "206 Partial Content"
+            range_header = environ.get("HTTP_RANGE", "")
+            byte1, byte2, status = 0, file_size - 1, "200 OK"
 
-        length = byte2 - byte1 + 1
-        with open(media_path, "rb") as f:
-            f.seek(byte1)
-            data = f.read(length)
+            if range_header:
+                m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+                if m:
+                    byte1 = int(m.group(1))
+                    byte2 = int(m.group(2)) if m.group(2) else file_size - 1
+                byte2 = min(byte2, file_size - 1)
+                status = "206 Partial Content"
 
-        start_response(status, [
-            ("Content-Type", mimetype),
-            ("Content-Length", str(len(data))),
-            ("Content-Range", f"bytes {byte1}-{byte2}/{file_size}"),
-            ("Accept-Ranges", "bytes"),
-        ])
-        return [data]
+            length = byte2 - byte1 + 1
+            with open(media_path, "rb") as f:
+                f.seek(byte1)
+                data = f.read(length)
 
-    except Exception as exc:
-        logger.error("Media WSGI error for %s: %s", path, exc)
-        start_response("500 Internal Server Error", [("Content-Type", "text/plain")])
-        return [str(exc).encode()]
+            start_response(status, [
+                ("Content-Type", mimetype),
+                ("Content-Length", str(len(data))),
+                ("Content-Range", f"bytes {byte1}-{byte2}/{file_size}"),
+                ("Accept-Ranges", "bytes"),
+            ])
+            return [data]
+
+        except Exception as exc:
+            logger.error("MediaMiddleware error for %s: %s", filename, exc)
+            start_response("500 Internal Server Error",
+                           [("Content-Type", "text/plain")])
+            return [str(exc).encode()]
 
 
 # Global Variables
@@ -876,15 +882,6 @@ def handle_disconnect():
     logger.info("Client disconnected")
 
 
-@app.route("/media/<path:filename>")
-def media(filename):
-    # Redirect to the dedicated media server (port 3006).
-    # That server is a plain WSGI app on its own eventlet listener, completely
-    # outside Flask's middleware/error-handler stack, which is what has been
-    # causing the 500 errors on every attempt to serve files via Flask.
-    return redirect(f"http://localhost:{MEDIA_SERVER_PORT}/{filename}", 302)
-
-
 @app.route("/start-over")
 def start_over():
     """Reset the refresh flag and redirect to the main display."""
@@ -995,21 +992,19 @@ def run_flask(cfg):
     logger.info("Starting Flask-SocketIO server on port %s...", CONFIG["port"])
     time.sleep(2)  # Allow some time before starting the server
 
-    # Start the dedicated media file server on a separate port.
-    # It is a plain WSGI function on its own eventlet listener — completely
-    # outside Flask's middleware and error-handler stack.  The /media/ Flask
-    # route just issues a 302 redirect here.
-    try:
-        media_listener = eventlet.listen(("127.0.0.1", MEDIA_SERVER_PORT))
-        eventlet.spawn(eventlet.wsgi.server, media_listener, _media_wsgi, log_output=False)
-        logger.info("Media server started on port %s", MEDIA_SERVER_PORT)
-    except Exception as media_err:
-        logger.error("Failed to start media server: %s", media_err)
+    # Wrap Flask with MediaMiddleware so /media/<file> requests are served
+    # directly at the WSGI level — before Flask's routing and error handlers.
+    # This is the only reliable way to serve files under eventlet on Android.
+    media_app = MediaMiddleware(
+        app,
+        lambda: CONFIG.get("media_folder", "media"),
+    )
+    logger.info("MediaMiddleware active — serving /media/* on port %s", CONFIG["port"])
 
     try:
         eventlet.wsgi.server(
-            eventlet.listen(("0.0.0.0", int(CONFIG["port"]))),  # Ensure port is an integer
-            app,
+            eventlet.listen(("0.0.0.0", int(CONFIG["port"]))),
+            media_app,
             log_output=True,
             socket_timeout=30,
         )
