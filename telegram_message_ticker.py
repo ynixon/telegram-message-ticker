@@ -792,6 +792,21 @@ def api_status():
     })
 
 
+@app.route("/api/media-check")
+def api_media_check():
+    """Diagnostic: list all media files with their sizes."""
+    media_dir = CONFIG.get("media_folder", "media")
+    files = []
+    try:
+        for fname in sorted(os.listdir(media_dir)):
+            fpath = os.path.join(media_dir, fname)
+            if os.path.isfile(fpath):
+                files.append({"name": fname, "size": os.path.getsize(fpath)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"media_folder": media_dir, "count": len(files), "files": files})
+
+
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle a client disconnection."""
