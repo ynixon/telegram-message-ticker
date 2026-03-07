@@ -815,50 +815,63 @@ def handle_disconnect():
 
 @app.route("/media/<path:filename>")
 def media(filename):
-    media_path = os.path.join(CONFIG["media_folder"], filename)
+    import traceback
 
-    if not os.path.isfile(media_path):
-        logger.error(f"Requested media file does not exist: {media_path}")
-        return jsonify({"error": "File not found"}), 404
+    try:
+        media_path = os.path.join(CONFIG["media_folder"], filename)
 
-    file_size = os.path.getsize(media_path)
-    logger.info(f"Serving media: {media_path} ({file_size} bytes)")
+        if not os.path.isfile(media_path):
+            logger.error(f"Media not found: {media_path}")
+            return jsonify({"error": "File not found", "path": media_path}), 404
 
-    mimetype, _ = mimetypes.guess_type(media_path)
-    if not mimetype:
-        mimetype = "application/octet-stream"
+        file_size = os.path.getsize(media_path)
+        logger.info(f"Serving {filename} ({file_size} bytes)")
 
-    range_header = request.headers.get("Range")
+        mimetype, _ = mimetypes.guess_type(media_path)
+        if not mimetype:
+            mimetype = "application/octet-stream"
 
-    if not range_header:
-        # No Range header: let Flask/Werkzeug serve it via FileWrapper.
-        # This is the standard send_file path — it works correctly with
-        # eventlet because Werkzeug's FileWrapper is a proper WSGI iterable,
-        # not a Python generator, so eventlet doesn't block on it.
-        response = send_file(media_path, mimetype=mimetype)
-        response.headers["Accept-Ranges"] = "bytes"
-        return response
+        range_header = request.headers.get("Range")
+        byte1 = 0
+        byte2 = min(file_size - 1, 4 * 1024 * 1024)  # default cap: 4 MB
+        status = 200
 
-    # Range request: read the requested bytes directly into memory.
-    # Generators deadlock under eventlet (monkey-patched I/O never resumes
-    # yield). Returning concrete bytes avoids the event-loop issue entirely.
-    # Chrome/Android WebView always requests small chunks (256 KB – 1 MB),
-    # so loading the range into RAM is safe.
-    m = re.search(r"bytes=(\d+)-(\d*)", range_header)
-    byte1 = int(m.group(1)) if m else 0
-    byte2 = int(m.group(2)) if (m and m.group(2)) else file_size - 1
-    byte2 = min(byte2, file_size - 1)
-    length = byte2 - byte1 + 1
+        if range_header:
+            m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+            if m:
+                byte1 = int(m.group(1))
+                byte2 = int(m.group(2)) if m.group(2) else file_size - 1
+            byte2 = min(byte2, file_size - 1)
+            status = 206
+        elif file_size <= byte2 + 1:
+            # Small file (≤ 4 MB): serve whole thing as 200
+            byte2 = file_size - 1
+            status = 200
 
-    with open(media_path, "rb") as f:
-        f.seek(byte1)
-        data = f.read(length)
+        length = byte2 - byte1 + 1
 
-    rv = Response(data, 206, content_type=mimetype)
-    rv.headers["Accept-Ranges"] = "bytes"
-    rv.headers["Content-Length"] = str(len(data))
-    rv.headers["Content-Range"] = f"bytes {byte1}-{byte2}/{file_size}"
-    return rv
+        # Always read bytes directly — no send_file, no generators, no iterators.
+        # Under eventlet any WSGI iterable that does I/O can block the green-thread
+        # loop. Concrete bytes are the only safe return value.
+        with open(media_path, "rb") as f:
+            f.seek(byte1)
+            data = f.read(length)
+
+        rv = Response(data, status, content_type=mimetype)
+        rv.headers["Accept-Ranges"] = "bytes"
+        rv.headers["Content-Length"] = str(len(data))
+        rv.headers["Content-Range"] = f"bytes {byte1}-{byte2}/{file_size}"
+        return rv
+
+    except Exception as exc:
+        err = traceback.format_exc()
+        logger.error(f"Media route exception for {filename}: {err}")
+        # Return the traceback as plain text so it's visible in the browser
+        return Response(
+            f"Internal error serving {filename}:\n\n{err}",
+            500,
+            content_type="text/plain",
+        )
 
 
 @app.route("/start-over")
