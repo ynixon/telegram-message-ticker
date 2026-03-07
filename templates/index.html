@@ -28,7 +28,7 @@
     </script>
     
     <!-- 3. Include Your Custom Script -->
-    <script src="{{ url_for('static', filename='ticker.js') }}"></script>
+    <script src="{{ url_for('static', filename='ticker.js') }}?v={{ cache_bust }}"></script>
     
     <!-- 4. Include Your CSS (if any) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">

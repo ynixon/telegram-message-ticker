@@ -641,10 +641,12 @@ def display():
     # Ensure message_age_limit is retrieved from config
     message_age_limit = CONFIG.get("message_age_limit", 0.25)  # Default 15 minutes
 
-    return render_template("index.html", 
-                           translations=translations, 
-                           refresh_flag=REFRESH_FLAG, 
-                           message_age_limit=message_age_limit)
+    import time
+    return render_template("index.html",
+                           translations=translations,
+                           refresh_flag=REFRESH_FLAG,
+                           message_age_limit=message_age_limit,
+                           cache_bust=int(time.time()))
 
 
 @app.route("/fetch-title", methods=["GET"])
