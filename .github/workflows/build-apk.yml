@@ -2,11 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
-    tags:
-      - 'v*'
   pull_request:
-    branches: [ main, master ]
   workflow_dispatch:   # allow manual trigger from the Actions tab
 
 jobs:
