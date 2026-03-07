@@ -32,6 +32,68 @@ import requests
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode="eventlet")
 
+MEDIA_SERVER_PORT = 3006  # Separate eventlet listener for raw file serving
+
+
+def _media_wsgi(environ, start_response):
+    """Minimal WSGI app that serves media files with Range support.
+
+    Runs on its own eventlet listener (port 3006), completely bypassing
+    Flask's middleware stack and error handlers. This eliminates all the
+    Flask/eventlet interaction issues that caused 500 errors on the main
+    port-3005 /media/ route.
+    """
+    path = environ.get("PATH_INFO", "").lstrip("/")
+    if not path:
+        start_response("404 Not Found", [("Content-Type", "text/plain")])
+        return [b"Not Found"]
+
+    media_path = os.path.join(CONFIG.get("media_folder", "media"), path)
+
+    if not os.path.isfile(media_path):
+        start_response("404 Not Found", [("Content-Type", "text/plain")])
+        return [b"Not Found"]
+
+    try:
+        file_size = os.path.getsize(media_path)
+        if file_size == 0:
+            start_response("204 No Content", [])
+            return [b""]
+
+        mimetype, _ = mimetypes.guess_type(media_path)
+        if not mimetype:
+            mimetype = "application/octet-stream"
+
+        range_header = environ.get("HTTP_RANGE", "")
+        byte1, byte2, status = 0, file_size - 1, "200 OK"
+
+        if range_header:
+            m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+            if m:
+                byte1 = int(m.group(1))
+                byte2 = int(m.group(2)) if m.group(2) else file_size - 1
+            byte2 = min(byte2, file_size - 1)
+            status = "206 Partial Content"
+
+        length = byte2 - byte1 + 1
+        with open(media_path, "rb") as f:
+            f.seek(byte1)
+            data = f.read(length)
+
+        start_response(status, [
+            ("Content-Type", mimetype),
+            ("Content-Length", str(len(data))),
+            ("Content-Range", f"bytes {byte1}-{byte2}/{file_size}"),
+            ("Accept-Ranges", "bytes"),
+        ])
+        return [data]
+
+    except Exception as exc:
+        logger.error("Media WSGI error for %s: %s", path, exc)
+        start_response("500 Internal Server Error", [("Content-Type", "text/plain")])
+        return [str(exc).encode()]
+
+
 # Global Variables
 LATEST_MESSAGES = []
 CHANNELS = []
@@ -815,63 +877,11 @@ def handle_disconnect():
 
 @app.route("/media/<path:filename>")
 def media(filename):
-    import traceback
-
-    try:
-        media_path = os.path.join(CONFIG["media_folder"], filename)
-
-        if not os.path.isfile(media_path):
-            logger.error(f"Media not found: {media_path}")
-            return jsonify({"error": "File not found", "path": media_path}), 404
-
-        file_size = os.path.getsize(media_path)
-        logger.info(f"Serving {filename} ({file_size} bytes)")
-
-        mimetype, _ = mimetypes.guess_type(media_path)
-        if not mimetype:
-            mimetype = "application/octet-stream"
-
-        range_header = request.headers.get("Range")
-        byte1 = 0
-        byte2 = min(file_size - 1, 4 * 1024 * 1024)  # default cap: 4 MB
-        status = 200
-
-        if range_header:
-            m = re.search(r"bytes=(\d+)-(\d*)", range_header)
-            if m:
-                byte1 = int(m.group(1))
-                byte2 = int(m.group(2)) if m.group(2) else file_size - 1
-            byte2 = min(byte2, file_size - 1)
-            status = 206
-        elif file_size <= byte2 + 1:
-            # Small file (≤ 4 MB): serve whole thing as 200
-            byte2 = file_size - 1
-            status = 200
-
-        length = byte2 - byte1 + 1
-
-        # Always read bytes directly — no send_file, no generators, no iterators.
-        # Under eventlet any WSGI iterable that does I/O can block the green-thread
-        # loop. Concrete bytes are the only safe return value.
-        with open(media_path, "rb") as f:
-            f.seek(byte1)
-            data = f.read(length)
-
-        rv = Response(data, status, content_type=mimetype)
-        rv.headers["Accept-Ranges"] = "bytes"
-        rv.headers["Content-Length"] = str(len(data))
-        rv.headers["Content-Range"] = f"bytes {byte1}-{byte2}/{file_size}"
-        return rv
-
-    except Exception as exc:
-        err = traceback.format_exc()
-        logger.error(f"Media route exception for {filename}: {err}")
-        # Return the traceback as plain text so it's visible in the browser
-        return Response(
-            f"Internal error serving {filename}:\n\n{err}",
-            500,
-            content_type="text/plain",
-        )
+    # Redirect to the dedicated media server (port 3006).
+    # That server is a plain WSGI app on its own eventlet listener, completely
+    # outside Flask's middleware/error-handler stack, which is what has been
+    # causing the 500 errors on every attempt to serve files via Flask.
+    return redirect(f"http://localhost:{MEDIA_SERVER_PORT}/{filename}", 302)
 
 
 @app.route("/start-over")
@@ -983,6 +993,17 @@ def run_flask(cfg):
 
     logger.info("Starting Flask-SocketIO server on port %s...", CONFIG["port"])
     time.sleep(2)  # Allow some time before starting the server
+
+    # Start the dedicated media file server on a separate port.
+    # It is a plain WSGI function on its own eventlet listener — completely
+    # outside Flask's middleware and error-handler stack.  The /media/ Flask
+    # route just issues a 302 redirect here.
+    try:
+        media_listener = eventlet.listen(("127.0.0.1", MEDIA_SERVER_PORT))
+        eventlet.spawn(eventlet.wsgi.server, media_listener, _media_wsgi, log_output=False)
+        logger.info("Media server started on port %s", MEDIA_SERVER_PORT)
+    except Exception as media_err:
+        logger.error("Failed to start media server: %s", media_err)
 
     try:
         eventlet.wsgi.server(
