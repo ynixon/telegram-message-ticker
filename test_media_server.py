@@ -100,6 +100,21 @@ def make_media_wsgi(media_folder):
     return _media_wsgi
 
 
+# ── Flask redirect app (mirrors the production /media/ route exactly) ───────
+
+def make_flask_redirect_app(media_port):
+    """Return a minimal Flask app whose /media/<filename> route does exactly
+    what production does: 302-redirect to the dedicated media server."""
+    from flask import Flask, redirect
+    app = Flask(__name__)
+
+    @app.route("/media/<path:filename>")
+    def media(filename):
+        return redirect(f"http://127.0.0.1:{media_port}/{filename}", 302)
+
+    return app
+
+
 # ── WSGI unit tests (no HTTP, no sockets) ─────────────────────────────────
 
 def run_wsgi_unit_tests(tmpdir, jpg_bytes, mp4_bytes):
@@ -178,10 +193,10 @@ def run_wsgi_unit_tests(tmpdir, jpg_bytes, mp4_bytes):
     check("204 for zero-byte file",    status == "204 No Content", status)
 
 
-# ── HTTP integration tests (real TCP socket via eventlet) ──────────────────
+# ── HTTP integration tests (direct to media server, no Flask) ─────────────
 
 def run_http_tests(port, tmpdir, jpg_bytes, mp4_bytes):
-    print("\n── Integration tests (HTTP via eventlet.wsgi) ──────────────────")
+    print("\n── Integration tests (HTTP direct to media server) ─────────────")
 
     base = f"http://127.0.0.1:{port}"
 
@@ -229,6 +244,82 @@ def run_http_tests(port, tmpdir, jpg_bytes, mp4_bytes):
     check("HTTP 404 for missing",      code == 404, code)
 
 
+# ── Android WebView simulation: Flask 302 redirect → media server ──────────
+# This is the exact flow the Android WebView uses when it sees
+#   <img src="/media/test.jpg">  or  <video><source src="/media/test.mp4">
+# The WebView fetches :3005/media/test.jpg, gets 302, follows to :3006/test.jpg
+
+def run_webview_simulation(flask_port, media_port, tmpdir, jpg_bytes, mp4_bytes):
+    print("\n── WebView simulation (Flask :3005 → 302 → media :3006) ────────")
+    print("   (simulates exactly what Android WebView does for img/video src)")
+
+    base = f"http://127.0.0.1:{flask_port}"
+
+    def get(path, range_header=None, follow_redirects=True, expect_error=False):
+        """Make an HTTP request through the Flask server, following 302s."""
+        req = urllib.request.Request(f"{base}{path}")
+        if range_header:
+            req.add_header("Range", range_header)
+        # urllib follows redirects by default
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, dict(r.headers), r.read(), r.url
+        except urllib.error.HTTPError as e:
+            if expect_error:
+                return e.code, {}, b"", ""
+            raise
+
+    # 1 – image through Flask (simulates <img src="/media/test.jpg">)
+    status, hdrs, body, final_url = get("/media/test.jpg")
+    check("WebView IMG: status 200 after redirect",  status == 200, status)
+    check("WebView IMG: Content-Type image/jpeg",
+          hdrs.get("Content-Type") == "image/jpeg", hdrs.get("Content-Type"))
+    check("WebView IMG: data is correct",            body == jpg_bytes,
+          f"{len(body)} vs {len(jpg_bytes)}")
+    check("WebView IMG: redirected to media port",
+          f":{media_port}/" in final_url, final_url)
+
+    # 2 – video initial request (simulates <video><source src="/media/test.mp4">)
+    status, hdrs, body, final_url = get("/media/test.mp4")
+    check("WebView VIDEO: status 200 after redirect", status == 200, status)
+    check("WebView VIDEO: Content-Type video/mp4",
+          hdrs.get("Content-Type") == "video/mp4", hdrs.get("Content-Type"))
+    check("WebView VIDEO: Accept-Ranges bytes",
+          hdrs.get("Accept-Ranges") == "bytes")
+    check("WebView VIDEO: data is correct",           body == mp4_bytes,
+          f"{len(body)} vs {len(mp4_bytes)}")
+
+    # 3 – video Range request (Android Chrome sends this for every video chunk)
+    # NOTE: Range requests go directly to the media server after the first redirect,
+    # but urllib sends each request to Flask first. Test both scenarios.
+    status, hdrs, body, final_url = get("/media/test.mp4", range_header="bytes=0-511")
+    check("WebView VIDEO Range: status 206",          status == 206, status)
+    check("WebView VIDEO Range: 512 bytes",           len(body) == 512, len(body))
+    check("WebView VIDEO Range: slice correct",       body == mp4_bytes[:512])
+
+    # 4 – mid-file range (simulates seeking)
+    sz = len(mp4_bytes)
+    mid = sz // 2
+    status, hdrs, body, final_url = get(
+        "/media/test.mp4", range_header=f"bytes={mid}-{mid+255}")
+    check("WebView VIDEO seek range: 206",            status == 206, status)
+    check("WebView VIDEO seek range: 256 bytes",      len(body) == 256, len(body))
+    check("WebView VIDEO seek range: slice correct",  body == mp4_bytes[mid:mid+256])
+
+    # 5 – 404 for missing file
+    code, _, _, _ = get("/media/nonexistent.jpg", expect_error=True)
+    check("WebView 404 for missing file",             code == 404, code)
+
+    # 6 – MIME types (critical: mimetypes.guess_type must work on Android)
+    print("\n  MIME type checks (mimetypes module, no system files needed):")
+    for ext, expected in [(".jpg", "image/jpeg"), (".mp4", "video/mp4"),
+                          (".png", "image/png"), (".gif", "image/gif"),
+                          (".webp", "image/webp")]:
+        got, _ = mimetypes.guess_type(f"file{ext}")
+        check(f"  mimetypes{ext} → {expected}", got == expected,
+              f"got {got!r}")
+
+
 # ── main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -243,24 +334,37 @@ def main():
         b"\xff\xd9"  # minimal JPEG end
     )
     # 64 KB MP4-like data (ftyp header + padding)
-    mp4_bytes = b"\x00\x00\x00\x1cftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * (64 * 1024)
+    mp4_bytes = (b"\x00\x00\x00\x1cftypisom\x00\x00\x02\x00isomiso2avc1mp41"
+                 + b"\x00" * (64 * 1024))
 
     with open(os.path.join(tmpdir, "test.jpg"), "wb") as f:
         f.write(jpg_bytes)
     with open(os.path.join(tmpdir, "test.mp4"), "wb") as f:
         f.write(mp4_bytes)
 
+    MEDIA_PORT = 18765
+    FLASK_PORT = 18766
+
     # WSGI unit tests (no network)
     run_wsgi_unit_tests(tmpdir, jpg_bytes, mp4_bytes)
 
-    # Start media server on a free port
-    port = 18765
-    wsgi = make_media_wsgi(tmpdir)
-    listener = eventlet.listen(("127.0.0.1", port))
-    eventlet.spawn(eventlet.wsgi.server, listener, wsgi, log_output=False)
-    eventlet.sleep(0.3)  # let the green thread start accepting
+    # Start media server (mirrors production port 3006)
+    media_wsgi = make_media_wsgi(tmpdir)
+    media_listener = eventlet.listen(("127.0.0.1", MEDIA_PORT))
+    eventlet.spawn(eventlet.wsgi.server, media_listener, media_wsgi, log_output=False)
 
-    run_http_tests(port, tmpdir, jpg_bytes, mp4_bytes)
+    # Start Flask redirect server (mirrors production port 3005)
+    flask_app = make_flask_redirect_app(MEDIA_PORT)
+    flask_listener = eventlet.listen(("127.0.0.1", FLASK_PORT))
+    eventlet.spawn(eventlet.wsgi.server, flask_listener, flask_app, log_output=False)
+
+    eventlet.sleep(0.3)  # let both green threads start accepting
+
+    # Direct media server tests
+    run_http_tests(MEDIA_PORT, tmpdir, jpg_bytes, mp4_bytes)
+
+    # Android WebView simulation: full redirect chain
+    run_webview_simulation(FLASK_PORT, MEDIA_PORT, tmpdir, jpg_bytes, mp4_bytes)
 
     # Summary
     total = PASS + FAIL
