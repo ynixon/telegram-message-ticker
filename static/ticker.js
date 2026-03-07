@@ -269,25 +269,29 @@ $(document).ready(function () {
             var videoUrl = videoMatch[1] || videoMatch[2];
             if (videoUrl) {
                 console.debug("Adding video to message media:", videoUrl);
-                var $vid = $(`
-                    <video controls playsinline webkit-playsinline preload="metadata" class="message-video">
-                        <source src="${videoUrl}" type="video/mp4">
-                    </video>
-                `);
-                $vid[0].addEventListener('error', function() {
-                    console.warn("Video error, trying without type hint:", videoUrl);
-                    var $fallback = $(`
-                        <video controls playsinline webkit-playsinline preload="metadata" class="message-video">
-                            <source src="${videoUrl}">
-                        </video>
-                    `);
-                    $fallback[0].addEventListener('error', function() {
-                        console.error("Video failed to load:", videoUrl);
-                        $(this).replaceWith(`<a href="${videoUrl}" target="_blank" class="video-download-link">📹 פתח וידאו</a>`);
+                // Use src directly on <video> (not <source> child) so the 'error'
+                // event fires on the element itself — <source> errors don't propagate.
+                var vid = document.createElement('video');
+                vid.controls = true;
+                vid.setAttribute('playsinline', '');
+                vid.setAttribute('webkit-playsinline', '');
+                vid.preload = 'metadata';
+                vid.className = 'message-video';
+                vid.src = videoUrl;
+                vid.addEventListener('error', function() {
+                    console.error("Video failed to load (src=" + videoUrl + "):", vid.error && vid.error.code);
+                    var link = document.createElement('a');
+                    link.href = videoUrl;
+                    link.className = 'video-download-link';
+                    link.textContent = '📹 פתח וידאו';
+                    link.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        fetch('/api/open_url?url=' + encodeURIComponent(videoUrl))
+                            .catch(function() { window.open(videoUrl, '_blank'); });
                     });
-                    $(this).replaceWith($fallback);
-                }, true);
-                $("#message-media").append($vid);
+                    vid.parentNode && vid.parentNode.replaceChild(link, vid);
+                });
+                $("#message-media").append(vid);
             }
         }
 

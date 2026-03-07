@@ -801,6 +801,9 @@ def media(filename):
         logger.error(f"Requested media file does not exist: {media_path}")
         return jsonify({"error": "File not found"}), 404
 
+    file_size = os.path.getsize(media_path)
+    logger.info(f"Serving media: {media_path} ({file_size} bytes)")
+
     mimetype, _ = mimetypes.guess_type(media_path)
     if not mimetype:
         mimetype = "application/octet-stream"
