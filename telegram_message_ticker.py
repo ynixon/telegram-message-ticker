@@ -728,8 +728,9 @@ def handle_request_messages():
 
 @app.route("/api/open_url")
 def api_open_url():
-    """Open an external URL in the device's default browser."""
+    """Open a URL with Android Intent (or return fallback for non-Android)."""
     url = request.args.get("url", "")
+    mime = request.args.get("mime", "")
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     try:
@@ -737,7 +738,11 @@ def api_open_url():
         Intent = autoclass("android.content.Intent")
         Uri = autoclass("android.net.Uri")
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
-        intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        intent = Intent(Intent.ACTION_VIEW)
+        if mime:
+            intent.setDataAndType(Uri.parse(url), mime)
+        else:
+            intent.setData(Uri.parse(url))
         PythonActivity.mActivity.startActivity(intent)
         return jsonify({"status": "opened"})
     except Exception:
