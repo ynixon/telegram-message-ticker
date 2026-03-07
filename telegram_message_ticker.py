@@ -9,6 +9,7 @@ import logging
 import signal
 import datetime
 import re
+import mimetypes
 from bs4 import BeautifulSoup
 from flask import (
     Flask,
@@ -16,12 +17,12 @@ from flask import (
     render_template,
     redirect,
     url_for,
-    send_from_directory,
     request,
     Response,
     session,
 )
 import eventlet
+import eventlet.wsgi  # submodule must be imported explicitly
 from argparse import ArgumentParser
 from flask_socketio import SocketIO, emit
 from telethon import TelegramClient, events
@@ -31,6 +32,75 @@ import requests
 # Initialize Flask and SocketIO
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode="eventlet")
+
+
+class MediaMiddleware:
+    """WSGI middleware: intercepts /media/<file> requests and serves files
+    directly with Range support, completely bypassing Flask's routing and
+    error handlers.  No redirect, no second port — everything on :3005."""
+
+    def __init__(self, flask_app, get_media_folder):
+        self.flask_app = flask_app
+        self.get_media_folder = get_media_folder  # callable → current folder
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path.startswith("/media/"):
+            return self._serve(path[7:], environ, start_response)
+        return self.flask_app(environ, start_response)
+
+    def _serve(self, raw_filename, environ, start_response):
+        filename = os.path.basename(raw_filename)   # prevents path traversal
+        if not filename:
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b"Not Found"]
+
+        media_path = os.path.join(self.get_media_folder(), filename)
+
+        if not os.path.isfile(media_path):
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b"Not Found"]
+
+        try:
+            file_size = os.path.getsize(media_path)
+            if file_size == 0:
+                start_response("204 No Content", [])
+                return [b""]
+
+            mimetype, _ = mimetypes.guess_type(media_path)
+            if not mimetype:
+                mimetype = "application/octet-stream"
+
+            range_header = environ.get("HTTP_RANGE", "")
+            byte1, byte2, status = 0, file_size - 1, "200 OK"
+
+            if range_header:
+                m = re.search(r"bytes=(\d+)-(\d*)", range_header)
+                if m:
+                    byte1 = int(m.group(1))
+                    byte2 = int(m.group(2)) if m.group(2) else file_size - 1
+                byte2 = min(byte2, file_size - 1)
+                status = "206 Partial Content"
+
+            length = byte2 - byte1 + 1
+            with open(media_path, "rb") as f:
+                f.seek(byte1)
+                data = f.read(length)
+
+            start_response(status, [
+                ("Content-Type", mimetype),
+                ("Content-Length", str(len(data))),
+                ("Content-Range", f"bytes {byte1}-{byte2}/{file_size}"),
+                ("Accept-Ranges", "bytes"),
+            ])
+            return [data]
+
+        except Exception as exc:
+            logger.error("MediaMiddleware error for %s: %s", filename, exc)
+            start_response("500 Internal Server Error",
+                           [("Content-Type", "text/plain")])
+            return [str(exc).encode()]
+
 
 # Global Variables
 LATEST_MESSAGES = []
@@ -323,8 +393,18 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
             return media_type, media_tag
 
         file_path = os.path.join(media_dir, filename)
-        if not os.path.exists(file_path):
+
+        # Re-download if file is missing or zero-byte (partial/failed previous download)
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.warning("Removed zero-byte media file, re-downloading: %s", file_path)
             await telegram_client.download_media(message, file=file_path)
+
+        # Only create tag if file was actually downloaded successfully
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            logger.error("Media download produced empty file for message ID %d", message.id)
+            return media_type, media_tag
 
         logger.info("Downloaded %s for message ID %d: %s", media_type, message.id, file_path)
 
@@ -333,7 +413,7 @@ async def download_media_and_get_tag(telegram_client, message, media_dir, channe
         elif media_type == "photo":
             media_tag = f'<img src="/media/{os.path.basename(file_path)}" alt="Photo" class="message-image">'
 
-    except (OSError, RuntimeError) as download_err:
+    except Exception as download_err:
         logger.error("Failed to download %s for message ID %d: %s", media_type, message.id, download_err)
 
     return media_type, media_tag
@@ -641,10 +721,12 @@ def display():
     # Ensure message_age_limit is retrieved from config
     message_age_limit = CONFIG.get("message_age_limit", 0.25)  # Default 15 minutes
 
-    return render_template("index.html", 
-                           translations=translations, 
-                           refresh_flag=REFRESH_FLAG, 
-                           message_age_limit=message_age_limit)
+    import time
+    return render_template("index.html",
+                           translations=translations,
+                           refresh_flag=REFRESH_FLAG,
+                           message_age_limit=message_age_limit,
+                           cache_bust=int(time.time()))
 
 
 @app.route("/fetch-title", methods=["GET"])
@@ -716,8 +798,9 @@ def handle_request_messages():
 
 @app.route("/api/open_url")
 def api_open_url():
-    """Open an external URL in the device's default browser."""
+    """Open a URL with Android Intent (or return fallback for non-Android)."""
     url = request.args.get("url", "")
+    mime = request.args.get("mime", "")
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     try:
@@ -725,7 +808,11 @@ def api_open_url():
         Intent = autoclass("android.content.Intent")
         Uri = autoclass("android.net.Uri")
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
-        intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        intent = Intent(Intent.ACTION_VIEW)
+        if mime:
+            intent.setDataAndType(Uri.parse(url), mime)
+        else:
+            intent.setData(Uri.parse(url))
         PythonActivity.mActivity.startActivity(intent)
         return jsonify({"status": "opened"})
     except Exception:
@@ -775,51 +862,25 @@ def api_status():
     })
 
 
+@app.route("/api/media-check")
+def api_media_check():
+    """Diagnostic: list all media files with their sizes."""
+    media_dir = CONFIG.get("media_folder", "media")
+    files = []
+    try:
+        for fname in sorted(os.listdir(media_dir)):
+            fpath = os.path.join(media_dir, fname)
+            if os.path.isfile(fpath):
+                files.append({"name": fname, "size": os.path.getsize(fpath)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"media_folder": media_dir, "count": len(files), "files": files})
+
+
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle a client disconnection."""
     logger.info("Client disconnected")
-
-
-@app.route("/media/<path:filename>")
-def media(filename):
-    media_path = os.path.join(CONFIG["media_folder"], filename)
-
-    if not os.path.isfile(media_path):
-        logger.error(f"Requested media file does not exist: {media_path}")
-        return jsonify({"error": "File not found"}), 404
-
-    range_header = request.headers.get("Range", None)
-    if not range_header:
-        return send_from_directory(CONFIG["media_folder"], filename)
-
-    size = os.path.getsize(media_path)
-    byte1, byte2 = 0, None
-    match = re.search(r"(\d+)-(\d*)", range_header)
-    if match:
-        groups = match.groups()
-        byte1 = int(groups[0])
-        if groups[1]:
-            byte2 = int(groups[1])
-
-    length = size - byte1 if byte2 is None else byte2 - byte1 + 1
-    data = None
-    try:
-        with open(media_path, "rb") as f:
-            f.seek(byte1)
-            data = f.read(length)
-    except OSError as e:
-        logger.error(f"Error reading media file {media_path}: {e}")
-        return jsonify({"error": "Error reading file"}), 500
-
-    # Determine the correct MIME type
-    mimetype, _ = mimetypes.guess_type(media_path)
-    if not mimetype:
-        mimetype = "application/octet-stream"
-
-    rv = Response(data, 206, mimetype=mimetype, content_type=mimetype, direct_passthrough=True)
-    rv.headers.add("Content-Range", f"bytes {byte1}-{byte1 + len(data) - 1}/{size}")
-    return rv
 
 
 @app.route("/start-over")
@@ -932,10 +993,19 @@ def run_flask(cfg):
     logger.info("Starting Flask-SocketIO server on port %s...", CONFIG["port"])
     time.sleep(2)  # Allow some time before starting the server
 
+    # Wrap Flask with MediaMiddleware so /media/<file> requests are served
+    # directly at the WSGI level — before Flask's routing and error handlers.
+    # This is the only reliable way to serve files under eventlet on Android.
+    media_app = MediaMiddleware(
+        app,
+        lambda: CONFIG.get("media_folder", "media"),
+    )
+    logger.info("MediaMiddleware active — serving /media/* on port %s", CONFIG["port"])
+
     try:
         eventlet.wsgi.server(
-            eventlet.listen(("0.0.0.0", int(CONFIG["port"]))),  # Ensure port is an integer
-            app,
+            eventlet.listen(("0.0.0.0", int(CONFIG["port"]))),
+            media_app,
             log_output=True,
             socket_timeout=30,
         )
